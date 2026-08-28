@@ -19,7 +19,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     self.state = state
     self.windowController = controller
 
-    NSApp.mainMenu = AppMenu.build(target: self)
+    let menuBar = AppMenu.build(target: self)
+    NSApp.mainMenu = menuBar
+    // ウィンドウ一覧の管理を macOS に任せる
+    NSApp.windowsMenu = menuBar.items.compactMap(\.submenu).first { $0.title == "Window" }
     controller.show()
   }
 
@@ -37,6 +40,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
   public func applicationWillTerminate(_ notification: Notification) {
     state?.flush()
   }
+
+  @objc func showAbout(_ sender: Any?) {
+    NSApp.orderFrontStandardAboutPanel(options: [.credits: Self.credits])
+  }
+
+  /// 標準のバージョン情報に添える一文。
+  private static let credits = NSAttributedString(
+    string: "ありがとう、エディ太郎。",
+    attributes: [
+      .font: NSFont.systemFont(ofSize: 11),
+      .foregroundColor: NSColor.secondaryLabelColor,
+    ])
 
   @objc func showPreferences(_ sender: Any?) {
     state?.isShowingPreferences = true

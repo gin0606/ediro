@@ -9,11 +9,14 @@ enum AppMenu {
     main.addItem(submenu(editMenu()))
     main.addItem(submenu(viewMenu(target: target)))
     main.addItem(submenu(textMenu(target: target)))
+    main.addItem(submenu(windowMenu()))
     return main
   }
 
   private static func appMenu(target: AppDelegate) -> NSMenu {
     let menu = NSMenu(title: "Ediro")
+    menu.addItem(item("About Ediro", #selector(AppDelegate.showAbout(_:)), target: target))
+    menu.addItem(.separator())
     menu.addItem(
       item("Preferences…", #selector(AppDelegate.showPreferences(_:)), key: ",", target: target))
     menu.addItem(.separator())
@@ -54,6 +57,17 @@ enum AppMenu {
     menu.addItem(
       item(
         "Decrease Font Size", #selector(AppDelegate.decreaseFontSize(_:)), key: "-", target: target))
+    return menu
+  }
+
+  /// 並び順と項目は macOS の標準に合わせる。NSApp.windowsMenu に渡すと、
+  /// 開いているウィンドウの一覧がシステム側で追加される。
+  private static func windowMenu() -> NSMenu {
+    let menu = NSMenu(title: "Window")
+    menu.addItem(item("Minimize", #selector(NSWindow.performMiniaturize(_:)), key: "m"))
+    menu.addItem(item("Zoom", #selector(NSWindow.performZoom(_:))))
+    menu.addItem(.separator())
+    menu.addItem(item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))))
     return menu
   }
 

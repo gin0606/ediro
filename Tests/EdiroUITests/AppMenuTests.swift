@@ -13,7 +13,7 @@ private func menu(_ title: String) -> NSMenu? {
 
 @Test func メニューバーに必要なメニューが並ぶ() {
   let titles = menuBar().items.compactMap { $0.submenu?.title }
-  #expect(titles == ["Ediro", "Edit", "View", "Text"])
+  #expect(titles == ["Ediro", "Edit", "View", "Text", "Window"])
 }
 
 @Test func 編集メニューに取り消しと複製の標準項目がある() throws {
@@ -45,4 +45,20 @@ private func menu(_ title: String) -> NSMenu? {
   let view = try #require(menu("View"))
   let item = try #require(view.items.first { $0.title == "Toggle Full Screen" })
   #expect(item.keyEquivalentModifierMask == [.control, .command])
+}
+
+@Test func バージョン情報がアプリメニューの先頭にある() throws {
+  let app = try #require(menu("Ediro"))
+  #expect(app.items.first?.title == "About Ediro")
+}
+
+@Test func ウィンドウメニューに標準項目がある() throws {
+  let window = try #require(menu("Window"))
+  #expect(window.items.map(\.title).contains("Minimize"))
+  #expect(window.items.map(\.title).contains("Zoom"))
+
+  let minimize = try #require(window.items.first { $0.title == "Minimize" })
+  #expect(minimize.keyEquivalent == "m")
+  // ウィンドウ操作は第一応答者へ流す
+  #expect(minimize.target == nil)
 }
