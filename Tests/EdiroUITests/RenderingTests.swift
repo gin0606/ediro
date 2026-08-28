@@ -6,6 +6,10 @@ import Testing
 @testable import EdiroUI
 
 /// ビューをオフスクリーンで PNG 化する。
+///
+/// `ImageRenderer` は `NSViewRepresentable` を描画できず、禁止マークのプレースホルダに
+/// 差し替える。差し替わってもエラーにならないため、寸法だけを見るテストは通ってしまう。
+/// エディタを含みうるビューを通すなら `colorAt` で色を見る。合成の確認は実機の撮影で行う。
 private func render<V: View>(_ view: V, size: CGSize) throws -> NSBitmapImageRep {
   let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height))
   renderer.scale = 1
