@@ -84,22 +84,16 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
     textView.backgroundColor = theme.editorBackground.nsColor
     textView.insertionPointColor = theme.editorForeground.nsColor
     scrollView.backgroundColor = theme.editorBackground.nsColor
-    textView.defaultParagraphStyle = paragraphStyle()
+    textView.defaultParagraphStyle = ParagraphStyle.make(for: preferences)
     // textView.font へ代入すると本文全体のフォントが一律に塗り替えられ、
     // トークンごとに付けた見出しサイズや太字が消える。
     // 入力中の書体は typingAttributes 側に設定する。
     textView.typingAttributes[.font] = FontResolver(preferences: preferences).bodyFont
+    textView.typingAttributes[.paragraphStyle] = ParagraphStyle.make(for: preferences)
     textView.typingAttributes[.foregroundColor] = theme.editorForeground.nsColor
   }
 
-  private func paragraphStyle() -> NSParagraphStyle {
-    let style = NSMutableParagraphStyle()
-    let font = FontResolver(preferences: preferences).bodyFont
-    let width = (" " as NSString).size(withAttributes: [.font: font]).width
-    style.defaultTabInterval = width * Double(preferences.tabSize)
-    style.tabStops = []
-    return style
-  }
+
 
   public func highlight() {
     guard let storage = textView.textStorage else { return }

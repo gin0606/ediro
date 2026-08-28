@@ -20,7 +20,11 @@ public struct MarkdownAttributer {
     let palette = SyntaxPalette(theme: theme)
 
     storage.setAttributes(
-      [.font: resolver.bodyFont, .foregroundColor: theme.editorForeground.nsColor], range: full)
+      [
+        .font: resolver.bodyFont,
+        .foregroundColor: theme.editorForeground.nsColor,
+        .paragraphStyle: ParagraphStyle.make(for: preferences),
+      ], range: full)
 
     for token in highlighter.tokens(in: text) {
       let style = palette.style(for: token.kind)

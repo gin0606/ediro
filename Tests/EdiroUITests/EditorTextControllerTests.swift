@@ -110,3 +110,14 @@ private func insertNewline(_ controller: EditorTextController) {
   insertNewline(controller)
   #expect(controller.textView.string == "  あい\n  うえお")
 }
+
+@Test func タブ幅の設定が本文の描画に効く() {
+  func width(tabSize: Int) -> Double {
+    let state = makeState(text: "a\tb")
+    state.preferences.tabSize = tabSize
+    let controller = EditorTextController(state: state)
+    guard let storage = controller.textView.textStorage else { return 0 }
+    return Double(storage.size().width)
+  }
+  #expect(width(tabSize: 8) > width(tabSize: 2))
+}
