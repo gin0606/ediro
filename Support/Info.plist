@@ -5,6 +5,7 @@
   <key>CFBundleName</key><string>Ediro</string>
   <key>CFBundleDisplayName</key><string>Ediro</string>
   <key>CFBundleExecutable</key><string>Ediro</string>
+  <key>CFBundleIconFile</key><string>Ediro</string>
   <key>CFBundleIdentifier</key><string>com.gin0606.ediro</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
