@@ -24,3 +24,23 @@ private func traits(_ font: NSFont) -> NSFontDescriptor.SymbolicTraits {
   preferences.fontName = "Menlo-Regular"
   #expect(FontResolver(preferences: preferences).bodyFont.fontName == "Menlo-Regular")
 }
+
+@Test func コード要素はプロポーショナルなフォントを選んでも等幅で描く() throws {
+  var preferences = Preferences.default
+  preferences.fontName = "Helvetica"
+  try #require(NSFont(name: "Helvetica", size: 13)?.isFixedPitch == false)
+
+  let resolver = FontResolver(preferences: preferences)
+  let palette = SyntaxPalette(theme: .fallback)
+  #expect(resolver.bodyFont.fontName == "Helvetica")
+  #expect(resolver.resolve(for: palette.style(for: .inlineCode)).font.isFixedPitch)
+  #expect(resolver.resolve(for: palette.style(for: .codeBlock)).font.isFixedPitch)
+}
+
+@Test func 等幅フォントを選んでいればコード要素もそのフォントを使う() {
+  var preferences = Preferences.default
+  preferences.fontName = "Menlo-Regular"
+  let palette = SyntaxPalette(theme: .fallback)
+  let code = FontResolver(preferences: preferences).resolve(for: palette.style(for: .inlineCode))
+  #expect(code.font.fontName == "Menlo-Regular")
+}

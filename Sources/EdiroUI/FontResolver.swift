@@ -24,7 +24,7 @@ public struct FontResolver {
 
   public func resolve(for style: SyntaxStyle) -> ResolvedFont {
     let size = preferences.fontSize * style.scale
-    let base = weighted(size: size, bold: style.bold)
+    let base = weighted(size: size, bold: style.bold, monospaced: style.monospaced)
     guard style.italic else { return base }
     return ResolvedFont(
       font: Self.slanted(base.font, size: size), needsSyntheticBold: base.needsSyntheticBold)
@@ -33,9 +33,13 @@ public struct FontResolver {
   /// システムの等幅フォントでは weight を直接指定する。
   /// ディスクリプタに .bold トレイトを付けても Semibold にしかならず、
   /// 和文のフォールバック先が本文から一段しか太くならないため見分けが付かない。
-  private func weighted(size: Double, bold: Bool) -> ResolvedFont {
+  ///
+  /// `monospaced` の要素は、本文にプロポーショナルなフォントが選ばれていても
+  /// 等幅で描く。コードの桁が揃わないと下書きとして読めなくなるため。
+  private func weighted(size: Double, bold: Bool, monospaced: Bool = false) -> ResolvedFont {
     guard !preferences.fontName.isEmpty,
-      let named = NSFont(name: preferences.fontName, size: size)
+      let named = NSFont(name: preferences.fontName, size: size),
+      !monospaced || named.isFixedPitch
     else {
       return ResolvedFont(
         font: .monospacedSystemFont(ofSize: size, weight: bold ? .bold : .regular),
