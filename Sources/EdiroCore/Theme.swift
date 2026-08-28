@@ -73,7 +73,8 @@ extension Theme {
           titleBar: darkTitleBar, animatesNavBar: true)
   ]
 
-  public static let fallback = all[1]  // dark-grad
+  /// 並び順は Preferences の表示順に合わせて変わりうるので、位置ではなく id で指す。
+  public static let fallback = all.first { $0.id == "dark-grad" }!
 
   public static func theme(id: String) -> Theme {
     all.first { $0.id == id } ?? fallback

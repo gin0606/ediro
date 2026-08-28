@@ -38,3 +38,8 @@ import Testing
   #expect(palette.style(for: .inlineCode).monospaced)
   #expect(palette.style(for: .codeBlock).monospaced)
 }
+
+@Test func 既定テーマは並び順ではなくIDで決まる() {
+  #expect(Theme.fallback.id == "dark-grad")
+  #expect(Preferences.default.themeID == "dark-grad")
+}
