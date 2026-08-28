@@ -41,6 +41,11 @@ public struct FontResolver {
       let named = NSFont(name: preferences.fontName, size: size),
       !monospaced || named.isFixedPitch
     else {
+      // 等幅システムフォントは和文の字面を持たず、和文はシステムのフォールバックが
+      // 描く。解決先は各マシンの構成で決まる。和文の送りは全角の 1em で、この
+      // フォントの欧文 0.618em の 2 倍に足りないため、和文と欧文の桁は揃わない。
+      // 揃えたい場合は欧文を和文の半分の送りで持つフォント (BIZ UDGothic 等) を
+      // Preferences で選ぶ。
       return ResolvedFont(
         font: .monospacedSystemFont(ofSize: size, weight: bold ? .bold : .regular),
         needsSyntheticBold: false)
