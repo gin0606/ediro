@@ -62,3 +62,10 @@ private func menu(_ title: String) -> NSMenu? {
   // ウィンドウ操作は第一応答者へ流す
   #expect(minimize.target == nil)
 }
+
+@Test func フォントサイズの拡大はイコールキーに割り当てる() throws {
+  // "+" だと修飾前の文字と一致せず、⇧⌘= でも ⌘= でも発火しない
+  let text = try #require(menu("Text"))
+  let increase = try #require(text.items.first { $0.title == "Increase Font Size" })
+  #expect(increase.keyEquivalent == "=")
+}

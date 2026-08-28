@@ -51,9 +51,11 @@ enum AppMenu {
 
   private static func textMenu(target: AppDelegate) -> NSMenu {
     let menu = NSMenu(title: "Text")
+    // キーは "+" ではなく "=" で登録する。macOS は打鍵を修飾前の文字で照合するため、
+    // "+" のままだと ⇧⌘= でも ⌘= でも一致せずショートカットが死ぬ。
     menu.addItem(
       item(
-        "Increase Font Size", #selector(AppDelegate.increaseFontSize(_:)), key: "+", target: target))
+        "Increase Font Size", #selector(AppDelegate.increaseFontSize(_:)), key: "=", target: target))
     menu.addItem(
       item(
         "Decrease Font Size", #selector(AppDelegate.decreaseFontSize(_:)), key: "-", target: target))
