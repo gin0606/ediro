@@ -41,3 +41,31 @@ private func makeStore() -> DocumentStore {
 @Test func どちらも無ければ既定の名前になる() {
   #expect(DocumentStore.directoryName(bundleName: nil, bundleIdentifier: nil) == "Ediro")
 }
+
+@Test func 退避すると元のファイルが別名で残る() throws {
+  let store = makeStore()
+  try store.save("読めなくなる前の本文")
+
+  let moved = try #require(try store.quarantine())
+  #expect(moved != store.fileURL)
+  #expect(try String(contentsOf: moved, encoding: .utf8) == "読めなくなる前の本文")
+  #expect(try store.load() == "", "退避後の保存先は空になっている")
+}
+
+@Test func 退避するものが無ければnilを返す() throws {
+  #expect(try makeStore().quarantine() == nil)
+}
+
+@Test func 同じ秒に退避しても前の退避先を潰さない() throws {
+  let store = makeStore()
+  let now = Date()
+
+  try store.save("いちど目")
+  let first = try #require(try store.quarantine(now: now))
+  try store.save("にど目")
+  let second = try #require(try store.quarantine(now: now))
+
+  #expect(first != second)
+  #expect(try String(contentsOf: first, encoding: .utf8) == "いちど目")
+  #expect(try String(contentsOf: second, encoding: .utf8) == "にど目")
+}

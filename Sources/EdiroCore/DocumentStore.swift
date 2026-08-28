@@ -44,4 +44,30 @@ public struct DocumentStore: Sendable {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try text.write(to: fileURL, atomically: true, encoding: .utf8)
   }
+
+  /// 読めなかった本文を隣に退避し、退避先を返す。
+  ///
+  /// `load()` が投げた後にそのまま保存すると、読めなかっただけで中身は残っている
+  /// ファイルを空の本文で上書きしてしまう。退避してから保存すれば、元の内容も
+  /// その回に書いた内容も失われない。
+  /// 退避先の名前は秒までしか持たないため、既にあるときは連番で避ける。
+  /// 退避すべきファイルが既に無いときは `nil` を返す。
+  public func quarantine(now: Date = Date()) throws -> URL? {
+    guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
+      return nil
+    }
+    let stamp = ISO8601DateFormatter().string(from: now)
+      .replacingOccurrences(of: ":", with: "-")
+    let directory = fileURL.deletingLastPathComponent()
+    let base = "\(fileURL.lastPathComponent).unreadable-\(stamp)"
+
+    var destination = directory.appending(path: base)
+    var suffix = 2
+    while FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
+      destination = directory.appending(path: "\(base)-\(suffix)")
+      suffix += 1
+    }
+    try FileManager.default.moveItem(at: fileURL, to: destination)
+    return destination
+  }
 }

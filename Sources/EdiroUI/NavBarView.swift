@@ -7,19 +7,29 @@ struct NavBarView: View {
 
   private var theme: Theme { state.theme }
 
+  private var labels: NavBarLabels {
+    NavBarLabels(
+      metrics: state.metrics, quarantined: state.quarantined, storageError: state.storageError)
+  }
+
   var body: some View {
     HStack(spacing: 12) {
-      if let error = state.storageError {
-        Text(error).lineLimit(1).help(error)
-      } else {
-        Text("Characters: \(state.metrics.characters)")
-        Text("Lines: \(state.metrics.lines)")
+      // 文字数は異常の文面に押し出されないよう優先度を上げる
+      ForEach(labels.counters, id: \.self) { counter in
+        Text(counter).lineLimit(1).layoutPriority(1)
+      }
+
+      // 退避先は名前そのものが用件なので、切り詰めるなら中ほどを落とす
+      ForEach(labels.notices, id: \.text) { notice in
+        Text(notice.text).lineLimit(1).truncationMode(.middle).help(notice.detail)
       }
 
       Spacer()
 
       Toggle("Always on top", isOn: $state.isAlwaysOnTop)
         .toggleStyle(.checkbox)
+        .fixedSize()
+        .layoutPriority(1)
     }
     .font(.system(size: 11))
     .foregroundStyle(theme.navBarText.color)
