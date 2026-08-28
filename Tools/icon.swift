@@ -39,10 +39,22 @@ NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 let canvas = NSRect(x: 0, y: 0, width: size, height: size)
 gradient.draw(in: NSBezierPath(rect: canvas), angle: 60)
 
-let inset = size * 0.17
+// macOS がアートワークに被せるマスクの実測値。1024 のキャンバスに対し、
+// 表示される形は一辺の 80.5%、その角丸半径は一辺の 37.1%、角では対角に
+// 一辺の 10.8% が削られる。
+let maskCornerRadius = size * 0.371
+let maskCornerBite = size * 0.108
+
+// 枠の太さは、角で削り取られる量に合わせる。
+let inset = maskCornerBite
 let screen = canvas.insetBy(dx: inset, dy: inset)
 screenColor.setFill()
-NSBezierPath(roundedRect: screen, xRadius: size * 0.075, yRadius: size * 0.075).fill()
+// 内側の角丸は外側と同心にする。こうすると枠の太さが辺でも角でも一定になる。
+// 外側の半径は、角の削れ量から円弧相当に逆算した値を使う。実測した 37.1% は
+// スクワークルの見かけの広がりで、円弧の半径として使うと丸くなりすぎる。
+let outerRadius = maskCornerBite / (2.0.squareRoot() - 1)
+let screenRadius = outerRadius - inset
+NSBezierPath(roundedRect: screen, xRadius: screenRadius, yRadius: screenRadius).fill()
 
 /// 画面の左上を原点とした割合で矩形を置く。
 func place(_ x: Double, _ y: Double, _ width: Double, _ height: Double) -> NSRect {
