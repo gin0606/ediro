@@ -41,6 +41,22 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
     setText(state.text)
     applyAppearance()
     highlight()
+    observeState()
+  }
+
+  /// SwiftUI 経由では設定の変更を受け取れないため、状態を自分で購読する。
+  /// NSViewRepresentable が updateNSView を呼ばれるのは自身が保持する値が
+  /// 変わったときだけで、AppState の参照しか持たないこのビューには届かない。
+  private func observeState() {
+    withObservationTracking {
+      _ = state.text
+      _ = state.preferences
+    } onChange: { [weak self] in
+      Task { @MainActor in
+        self?.syncFromState()
+        self?.observeState()
+      }
+    }
   }
 
   /// 外側から本文が差し替わったときだけ書き戻す。入力のたびに代入すると
