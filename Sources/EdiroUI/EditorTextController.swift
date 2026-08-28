@@ -38,9 +38,10 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
     textView.delegate = self
     textView.textStorage?.delegate = self
 
-    setText(state.text)
+    // textStorage の delegate はこの代入で didProcessEditing を呼ぶため、
+    // ハイライトはここで一度掛かる。明示的に掛け直すと全文を二度走査する。
+    textView.string = state.text
     applyAppearance()
-    highlight()
     observeState()
   }
 
@@ -64,36 +65,33 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
   public func syncFromState() {
     if textView.string != state.text {
       let selected = textView.selectedRange()
-      setText(state.text)
+      textView.string = state.text
       textView.setSelectedRange(
         NSRange(location: min(selected.location, (state.text as NSString).length), length: 0))
     }
 
-    let changed = theme != state.theme || preferences != state.preferences
+    // 打鍵のたびにも呼ばれる。見た目に関わる値が動いていなければ、外観の
+    // 塗り直しもハイライトも要らない。
+    guard theme != state.theme || preferences != state.preferences else { return }
     theme = state.theme
     preferences = state.preferences
     applyAppearance()
-    if changed { highlight() }
-  }
-
-  private func setText(_ text: String) {
-    textView.string = text
+    highlight()
   }
 
   private func applyAppearance() {
+    let paragraphStyle = ParagraphStyle.make(for: preferences)
     textView.backgroundColor = theme.editorBackground.nsColor
     textView.insertionPointColor = theme.editorForeground.nsColor
     scrollView.backgroundColor = theme.editorBackground.nsColor
-    textView.defaultParagraphStyle = ParagraphStyle.make(for: preferences)
+    textView.defaultParagraphStyle = paragraphStyle
     // textView.font へ代入すると本文全体のフォントが一律に塗り替えられ、
     // トークンごとに付けた見出しサイズや太字が消える。
     // 入力中の書体は typingAttributes 側に設定する。
     textView.typingAttributes[.font] = FontResolver(preferences: preferences).bodyFont
-    textView.typingAttributes[.paragraphStyle] = ParagraphStyle.make(for: preferences)
+    textView.typingAttributes[.paragraphStyle] = paragraphStyle
     textView.typingAttributes[.foregroundColor] = theme.editorForeground.nsColor
   }
-
-
 
   public func highlight() {
     guard let storage = textView.textStorage else { return }

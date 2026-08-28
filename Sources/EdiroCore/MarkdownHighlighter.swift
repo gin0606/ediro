@@ -41,6 +41,10 @@ public struct MarkdownHighlighter: Sendable {
     (.inlineCode, "`[^`\\n]+`")
   ]
 
+  /// 打鍵のたびに作り直されるので、コンパイル済みの正規表現は使い回す。
+  /// `NSRegularExpression` は不変で、複数スレッドから同時に使える。
+  public static let shared = MarkdownHighlighter()
+
   private let expressions: [(Token.Kind, NSRegularExpression)]
 
   public init() {

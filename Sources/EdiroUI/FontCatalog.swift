@@ -9,6 +9,10 @@ public struct FontCatalog {
     public var id: String { postScriptName }
   }
 
+  /// インストール済みフォントの全数走査は重く、実行中に増減しない。
+  /// ビューの body から参照されるので、プロセスに一度だけ作る。
+  public static let installed = FontCatalog()
+
   public let monospaced: [Entry]
   public let proportional: [Entry]
 

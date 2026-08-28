@@ -4,7 +4,6 @@ import Testing
 
 @testable import EdiroUI
 
-
 @Test func ウィンドウには最小サイズが設定される() {
   let controller = MainWindowController(state: makeState())
   #expect(controller.window.contentMinSize.width > 0)

@@ -3,7 +3,7 @@ import SwiftUI
 
 struct PreferencesView: View {
   @Bindable var state: AppState
-  private let catalog = FontCatalog()
+  private var catalog: FontCatalog { .installed }
 
   private var theme: Theme { state.theme }
 

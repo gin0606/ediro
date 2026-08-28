@@ -4,8 +4,6 @@ import Testing
 
 @testable import EdiroUI
 
-
-
 private func bodyFontSize(_ controller: EditorTextController) -> Double? {
   let font = controller.textView.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
   return font.map { Double($0.pointSize) }

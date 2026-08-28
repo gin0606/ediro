@@ -8,7 +8,7 @@ public struct MarkdownAttributer {
 
   private let theme: Theme
   private let preferences: Preferences
-  private let highlighter = MarkdownHighlighter()
+  private let highlighter = MarkdownHighlighter.shared
   private let resolver: FontResolver
 
   public init(theme: Theme, preferences: Preferences) {
