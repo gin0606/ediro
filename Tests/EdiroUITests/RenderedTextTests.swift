@@ -93,17 +93,18 @@ private func font(in text: String, at substring: String) throws -> NSFont {
   #expect(try differingPixels("slanted", bodyFont, italicFont) > 0)
 }
 
-@Test func 斜体にしてもグリフの送り幅は変わらない() throws {
+@Test func 斜体にしても解決したフォントのグリフは送り幅が変わらない() throws {
   let text = "plain *slanted*"
   let bodyFont = try font(in: text, at: "plain")
   let italicFont = try font(in: text, at: "slanted")
 
-  // 和文と欧文が隣接する箇所の詰めだけは動くため、字種ごとに確かめる。
-  for sample in ["斜体テスト", "monospaced"] {
-    let plain = (sample as NSString).size(withAttributes: [.font: bodyFont]).width
-    let slanted = (sample as NSString).size(withAttributes: [.font: italicFont]).width
-    #expect(abs(plain - slanted) < 0.01, "\(sample) の桁揃えが崩れている")
-  }
+  // 和文を含めない。等幅システムフォントに和文の字面は無く、フォールバック先は
+  // 各マシンの導入フォントで決まる。素と斜体で別のフォントに解決されうるので、
+  // 送り幅の一致はアプリからは保証できない。
+  let sample = "monospaced"
+  let plain = (sample as NSString).size(withAttributes: [.font: bodyFont]).width
+  let slanted = (sample as NSString).size(withAttributes: [.font: italicFont]).width
+  #expect(abs(plain - slanted) < 0.01, "\(sample) の桁揃えが崩れている")
 }
 
 /// 太い字面を持たないフォントを実機から探す。無い環境では検証を省く。
