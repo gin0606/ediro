@@ -20,6 +20,5 @@ App Store 配布はせず ad-hoc 署名で自分用にビルドする。
 
 ## 注意点
 
-- 依存は増やさない方針。Markdown のパースも `NSRegularExpression` で自前に持っている
-- `~/Library/Application Support/Ediro/draft.md` には実際の下書きが入る。テストや動作確認で
-  上書きしない（テストは一時ディレクトリの `DocumentStore` を使う）
+`~/Library/Application Support/Ediro/draft.md` には実際の下書きが入る。テストや動作確認で
+上書きしない（テストは一時ディレクトリの `DocumentStore` を使う）。
