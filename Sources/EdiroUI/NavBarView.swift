@@ -3,7 +3,6 @@ import SwiftUI
 
 struct NavBarView: View {
   @Bindable var state: AppState
-  @State private var wavePhase: CGFloat = 0
 
   private var theme: Theme { state.theme }
 
@@ -41,21 +40,32 @@ struct NavBarView: View {
 
   @ViewBuilder private var background: some View {
     if theme.animatesNavBar {
-      // CSS の background-position アニメーションに相当する往復。
-      // 塗りを横に引き伸ばして位置をずらすことで色が流れて見える。
-      GeometryReader { proxy in
-        theme.navBar.view
-          .frame(width: proxy.size.width * 3)
-          .offset(x: -proxy.size.width * wavePhase)
-          .onAppear {
-            withAnimation(.easeInOut(duration: 10).repeatForever(autoreverses: true)) {
-              wavePhase = 2
-            }
-          }
-      }
-      .clipped()
+      // テーマごとに別の identity を与える。位相を持つ状態が前のテーマから
+      // 引き継がれると、終端の値のまま animation が何も動かさなくなる。
+      WaveFill(fill: theme.navBar).id(theme.id)
     } else {
       theme.navBar.view
     }
+  }
+}
+
+/// 塗りを横に引き伸ばして位置をずらし、色が流れて見えるようにする。
+/// CSS の background-position アニメーションに相当する往復。
+private struct WaveFill: View {
+  let fill: Fill
+  @State private var phase: CGFloat = 0
+
+  var body: some View {
+    GeometryReader { proxy in
+      fill.view
+        .frame(width: proxy.size.width * 3)
+        .offset(x: -proxy.size.width * phase)
+        .onAppear {
+          withAnimation(.easeInOut(duration: 10).repeatForever(autoreverses: true)) {
+            phase = 2
+          }
+        }
+    }
+    .clipped()
   }
 }
