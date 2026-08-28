@@ -18,7 +18,11 @@ App Store 配布はせず ad-hoc 署名で自分用にビルドする。
 - `osascript` + System Events — アクセシビリティ権限が付与済みで、メニュー操作やキー入力を自動化できる。
   App メニューの `Preferences…` は macOS が `Settings…` に自動改称するため、その名前で参照する
 
-## 注意点
+## 開発用ビルドと日常使いのビルド
 
-`~/Library/Application Support/Ediro/draft.md` には実際の下書きが入る。テストや動作確認で
-上書きしない（テストは一時ディレクトリの `DocumentStore` を使う）。
+`make` の既定は開発用ビルドで、名前 (`Ediro Dev`)・bundle identifier・アイコンの色 (橙) が
+日常使いのものと違う。設定と下書きの保存先はバンドル名から導くため、`make run` で起動した
+アプリは日常使いの下書きに触れない。日常使いのビルドは `make release` で作る。
+
+`stop` / `shot` が対象にするプロセス名も変わる。`pgrep` や `osascript` で直接アプリを指すときは
+`EdiroDev` を使う。

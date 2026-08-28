@@ -25,3 +25,21 @@ private func makeStore() -> DocumentStore {
   try store.save("短い")
   #expect(try store.load() == "短い")
 }
+
+@Test func 保存先はバンドル名から分かれる() {
+  #expect(
+    DocumentStore.directoryName(bundleName: "Ediro", bundleIdentifier: "com.gin0606.ediro")
+      != DocumentStore.directoryName(
+        bundleName: "Ediro Dev", bundleIdentifier: "com.gin0606.ediro.dev"))
+}
+
+@Test func バンドル名が無ければ識別子を使う() {
+  #expect(
+    DocumentStore.directoryName(bundleName: nil, bundleIdentifier: "com.gin0606.ediro.dev")
+      == "com.gin0606.ediro.dev")
+  #expect(DocumentStore.directoryName(bundleName: "", bundleIdentifier: "x") == "x")
+}
+
+@Test func どちらも無ければ既定の名前になる() {
+  #expect(DocumentStore.directoryName(bundleName: nil, bundleIdentifier: nil) == "Ediro")
+}

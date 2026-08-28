@@ -7,10 +7,12 @@
 ## 開発
 
 ```sh
-swift test   # テスト
-make run     # .app を組み立てて起動
+swift test     # テスト
+make run       # 開発用ビルドを起動する (Ediro Dev、橙のアイコン)
+make release   # 日常使いのビルドを .build/Ediro.app に作る
 ```
 
+開発用と日常使いのビルドは設定と下書きの保存先が分かれている。
 その他のターゲットは `Makefile` を参照。
 
 ## 要件

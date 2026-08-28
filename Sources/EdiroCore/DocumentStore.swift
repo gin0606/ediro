@@ -11,12 +11,23 @@ public struct DocumentStore: Sendable {
   }
 
   public static func applicationSupport(
-    fileManager: FileManager = .default
+    bundle: Bundle = .main, fileManager: FileManager = .default
   ) throws -> DocumentStore {
     let base = try fileManager.url(
       for: .applicationSupportDirectory, in: .userDomainMask,
       appropriateFor: nil, create: true)
-    return DocumentStore(fileURL: base.appending(path: "Ediro/draft.md"))
+    let directory = directoryName(
+      bundleName: bundle.object(forInfoDictionaryKey: "CFBundleName") as? String,
+      bundleIdentifier: bundle.bundleIdentifier)
+    return DocumentStore(fileURL: base.appending(path: "\(directory)/draft.md"))
+  }
+
+  /// 保存先のディレクトリ名。バンドル名から導くことで、名前の違うビルドは
+  /// 別の場所を使う。開発用ビルドが実際に使うビルドの下書きに触れない。
+  public static func directoryName(bundleName: String?, bundleIdentifier: String?) -> String {
+    if let bundleName, !bundleName.isEmpty { return bundleName }
+    if let bundleIdentifier, !bundleIdentifier.isEmpty { return bundleIdentifier }
+    return "Ediro"
   }
 
   /// 保存済みの本文を読む。ファイルが無い初回起動は空文字を返す。

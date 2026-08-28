@@ -1,6 +1,6 @@
 // アプリアイコンを描いて PNG に書き出す。
 //
-//   swift Tools/icon.swift <出力先.png>
+//   swift Tools/icon.swift <出力先.png> [dev]
 //
 // 図柄はエディ太郎 (https://editaro.com) のアイコンに倣い、グラデーションの枠と
 // 暗い画面にキャレットを置く。色は Ediro の既定テーマ dark-grad に合わせている。
@@ -15,10 +15,15 @@ func rgb(_ hex: UInt32) -> NSColor {
     blue: Double(hex & 0xFF) / 255, alpha: 1)
 }
 
-let gradient = NSGradient(colors: [rgb(0x5433FF), rgb(0x00ABFF), rgb(0x30D9EF)])!
+// 開発用ビルドは色を変える。Dock や撮影結果で日常使いのものと取り違えないため。
+let isDevelopment = CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "dev"
+let gradient =
+  isDevelopment
+  ? NSGradient(colors: [rgb(0xFF7A00), rgb(0xFFB020), rgb(0xFFD966)])!
+  : NSGradient(colors: [rgb(0x5433FF), rgb(0x00ABFF), rgb(0x30D9EF)])!
 let screenColor = rgb(0x1E1E1E)
 let caretColor = NSColor.white
-let lineColor = rgb(0x00ABFF)
+let lineColor = isDevelopment ? rgb(0xFFB020) : rgb(0x00ABFF)
 
 let rep = NSBitmapImageRep(
   bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size), bitsPerSample: 8,
