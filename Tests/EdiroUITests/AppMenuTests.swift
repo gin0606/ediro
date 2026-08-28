@@ -1,0 +1,48 @@
+import AppKit
+import Testing
+
+@testable import EdiroUI
+
+private func menuBar() -> NSMenu {
+  AppMenu.build(target: AppDelegate())
+}
+
+private func menu(_ title: String) -> NSMenu? {
+  menuBar().items.compactMap(\.submenu).first { $0.title == title }
+}
+
+@Test func メニューバーに必要なメニューが並ぶ() {
+  let titles = menuBar().items.compactMap { $0.submenu?.title }
+  #expect(titles == ["Ediro", "Edit", "View", "Text"])
+}
+
+@Test func 編集メニューに取り消しと複製の標準項目がある() throws {
+  // これらが無いと NSTextView の Cmd+C / Cmd+V / Cmd+Z が効かない
+  let edit = try #require(menu("Edit"))
+  let titles = edit.items.map(\.title)
+  for expected in ["Undo", "Redo", "Cut", "Copy", "Paste", "Select All"] {
+    #expect(titles.contains(expected))
+  }
+}
+
+@Test func 応答連鎖に流す項目は宛先を固定しない() throws {
+  let edit = try #require(menu("Edit"))
+  for item in edit.items where item.action != nil {
+    #expect(item.target == nil, "\(item.title) が特定の宛先に固定されている")
+  }
+}
+
+@Test func アプリ固有の項目はデリゲートに届く() throws {
+  let delegate = AppDelegate()
+  let bar = AppMenu.build(target: delegate)
+  let text = try #require(bar.items.compactMap(\.submenu).first { $0.title == "Text" })
+  for item in text.items {
+    #expect(item.target === delegate)
+  }
+}
+
+@Test func 全画面切替はControlとCommandの組み合わせになる() throws {
+  let view = try #require(menu("View"))
+  let item = try #require(view.items.first { $0.title == "Toggle Full Screen" })
+  #expect(item.keyEquivalentModifierMask == [.control, .command])
+}

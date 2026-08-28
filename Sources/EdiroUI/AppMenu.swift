@@ -5,63 +5,72 @@ import AppKit
 enum AppMenu {
   static func build(target: AppDelegate) -> NSMenu {
     let main = NSMenu()
-
-    let appItem = NSMenuItem()
-    let appMenu = NSMenu()
-    appMenu.addItem(
-      withTitle: "Preferences…", action: #selector(AppDelegate.showPreferences(_:)),
-      keyEquivalent: ",")
-    appMenu.addItem(.separator())
-    appMenu.addItem(withTitle: "Hide Ediro", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-    appMenu.addItem(.separator())
-    appMenu.addItem(withTitle: "Quit Ediro", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-    appItem.submenu = appMenu
-    main.addItem(appItem)
-
-    let editItem = NSMenuItem()
-    let editMenu = NSMenu(title: "Edit")
-    editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-    let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
-    redo.keyEquivalentModifierMask = [.command, .shift]
-    editMenu.addItem(.separator())
-    editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-    editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-    editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-    editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-    editItem.submenu = editMenu
-    main.addItem(editItem)
-
-    let viewItem = NSMenuItem()
-    let viewMenu = NSMenu(title: "View")
-    viewMenu.addItem(
-      withTitle: "Close", action: #selector(NSApplication.hide(_:)), keyEquivalent: "w")
-    let fullScreen = viewMenu.addItem(
-      withTitle: "Toggle Full Screen", action: #selector(AppDelegate.toggleFullScreen(_:)),
-      keyEquivalent: "f")
-    fullScreen.keyEquivalentModifierMask = [.control, .command]
-    viewItem.submenu = viewMenu
-    main.addItem(viewItem)
-
-    let textItem = NSMenuItem()
-    let textMenu = NSMenu(title: "Text")
-    textMenu.addItem(
-      withTitle: "Increase Font Size", action: #selector(AppDelegate.increaseFontSize(_:)),
-      keyEquivalent: "+")
-    textMenu.addItem(
-      withTitle: "Decrease Font Size", action: #selector(AppDelegate.decreaseFontSize(_:)),
-      keyEquivalent: "-")
-    textItem.submenu = textMenu
-    main.addItem(textItem)
-
-    for menu in [appMenu, viewMenu, textMenu] {
-      for item in menu.items where item.action != nil && item.target == nil {
-        if item.action?.description.hasPrefix("hide") == false
-          && item.action != #selector(NSApplication.terminate(_:))
-        {
-          item.target = target
-        }
-      }
-    }
+    main.addItem(submenu(appMenu(target: target)))
+    main.addItem(submenu(editMenu()))
+    main.addItem(submenu(viewMenu(target: target)))
+    main.addItem(submenu(textMenu(target: target)))
     return main
+  }
+
+  private static func appMenu(target: AppDelegate) -> NSMenu {
+    let menu = NSMenu(title: "Ediro")
+    menu.addItem(
+      item("Preferences…", #selector(AppDelegate.showPreferences(_:)), key: ",", target: target))
+    menu.addItem(.separator())
+    menu.addItem(item("Hide Ediro", #selector(NSApplication.hide(_:)), key: "h"))
+    menu.addItem(.separator())
+    menu.addItem(item("Quit Ediro", #selector(NSApplication.terminate(_:)), key: "q"))
+    return menu
+  }
+
+  private static func editMenu() -> NSMenu {
+    let menu = NSMenu(title: "Edit")
+    // 取り消し系は NSTextView が応答するので、セレクタ名で応答連鎖に流す。
+    menu.addItem(item("Undo", Selector(("undo:")), key: "z"))
+    menu.addItem(item("Redo", Selector(("redo:")), key: "z", modifiers: [.command, .shift]))
+    menu.addItem(.separator())
+    menu.addItem(item("Cut", #selector(NSText.cut(_:)), key: "x"))
+    menu.addItem(item("Copy", #selector(NSText.copy(_:)), key: "c"))
+    menu.addItem(item("Paste", #selector(NSText.paste(_:)), key: "v"))
+    menu.addItem(item("Select All", #selector(NSText.selectAll(_:)), key: "a"))
+    return menu
+  }
+
+  private static func viewMenu(target: AppDelegate) -> NSMenu {
+    let menu = NSMenu(title: "View")
+    menu.addItem(item("Close", #selector(NSApplication.hide(_:)), key: "w"))
+    menu.addItem(
+      item(
+        "Toggle Full Screen", #selector(AppDelegate.toggleFullScreen(_:)), key: "f",
+        modifiers: [.control, .command], target: target))
+    return menu
+  }
+
+  private static func textMenu(target: AppDelegate) -> NSMenu {
+    let menu = NSMenu(title: "Text")
+    menu.addItem(
+      item(
+        "Increase Font Size", #selector(AppDelegate.increaseFontSize(_:)), key: "+", target: target))
+    menu.addItem(
+      item(
+        "Decrease Font Size", #selector(AppDelegate.decreaseFontSize(_:)), key: "-", target: target))
+    return menu
+  }
+
+  /// target を省いた項目は応答連鎖に流れ、NSApp や第一応答者が受け取る。
+  private static func item(
+    _ title: String, _ action: Selector, key: String = "",
+    modifiers: NSEvent.ModifierFlags? = nil, target: AnyObject? = nil
+  ) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+    if let modifiers { item.keyEquivalentModifierMask = modifiers }
+    item.target = target
+    return item
+  }
+
+  private static func submenu(_ menu: NSMenu) -> NSMenuItem {
+    let item = NSMenuItem()
+    item.submenu = menu
+    return item
   }
 }
