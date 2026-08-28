@@ -18,3 +18,9 @@ import Testing
   #expect(TextMetrics(text: "👨‍👩‍👧‍👦").characters == 1)
   #expect(TextMetrics(text: "あ🎉い").characters == 3)
 }
+
+@Test func CRLFの本文も行数を数える() {
+  #expect(TextMetrics(text: "a\r\nb\r\nc").lines == 3)
+  #expect(TextMetrics(text: "末尾がCRLF\r\n").lines == 2)
+  #expect(TextMetrics(text: "旧MacのCR\rのみ").lines == 2)
+}

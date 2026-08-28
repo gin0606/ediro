@@ -7,8 +7,11 @@ public struct TextMetrics: Equatable, Sendable {
 
   /// 文字数は書記素クラスタ単位で数える。絵文字や結合文字を人間の見た目どおりに
   /// 1 文字として扱うため、UTF-16 の長さは使わない。
+  ///
+  /// 行数は `isNewline` で数える。CRLF は 1 つの書記素クラスタで `"\n"` と等しくならず、
+  /// 直接比較すると Windows 由来の本文がまるごと 1 行になる。
   public init(text: String) {
     characters = text.count
-    lines = text.isEmpty ? 1 : text.count(where: { $0 == "\n" }) + 1
+    lines = text.isEmpty ? 1 : text.count(where: \.isNewline) + 1
   }
 }
