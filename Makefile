@@ -69,7 +69,7 @@ app: build $(ICNS)
 	codesign --force --sign - $(BUNDLE)
 	@echo "built $(BUNDLE) ($$(du -sh $(BUNDLE) | cut -f1))"
 
-## 日常的に使うビルド。作ったら /Applications へ自分で移す。
+## 日常使いのビルドを手元で作る。/Applications へ入れるのは Homebrew 経由。
 release:
 	@$(MAKE) VARIANT=release app
 

@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # ビルドに macOS 26 SDK と Swift 6.2 が要る。
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        # 既定の `bash -e` は pipefail を立てないため、パイプ左辺の失敗が
+        # 空文字として下流に流れる。
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # ずれたまま配ると Info.plist とリリース名が食い違うので、ビルドの前に落とす。
+      # 版番号は CFBundleVersion にも入るので、その値域 (整数 3 つまで) も見る。
+      - name: Check the tag against VERSION
+        id: version
+        run: |
+          version="$(make -s version)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "タグ $GITHUB_REF_NAME と Makefile の VERSION ($version) が一致しません" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+){0,2}$'; then
+            echo "VERSION ($version) が CFBundleVersion の値域に収まりません" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: swift test
+
+      - name: Build the distribution zip
+        id: dist
+        run: |
+          make dist
+          echo "path=$(make -s dist-path)" >> "$GITHUB_OUTPUT"
+
+      # リリースの公開は取り消せないので、secrets と tap の実在は公開より前に確かめる。
+      - uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: gin0606
+          repositories: homebrew-tap
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: gin0606/homebrew-tap
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
+
+      # 同じタグでやり直せるようにする。既に公開されている asset は差し替えず
+      # その digest を採る。ditto の zip は mtime を含むので再ビルドすると
+      # digest が変わり、差し替えると公開物と cask がずれる。
+      - name: Publish the release
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZIP: ${{ steps.dist.outputs.path }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          name="$(basename "$ZIP")"
+          assets="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+          if grep -qxF "$name" <<<"$assets"; then
+            # 公開済みの zip をそのまま採るので、中身が今の commit と一致している
+            # 保証が要る。失敗した回の再実行 (run_attempt > 1) なら同じ commit だが、
+            # タグを張り直した回はここで古い zip を配ることになるので落とす。
+            if [ "$RUN_ATTEMPT" = "1" ]; then
+              echo "$name は既に公開されている。再実行ではないので中止する" >&2
+              exit 1
+            fi
+            gh release download "$GITHUB_REF_NAME" --pattern "$name" --dir published
+            published="published/$name"
+          elif gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ZIP"
+            published="$ZIP"
+          else
+            gh release create "$GITHUB_REF_NAME" "$ZIP" --generate-notes
+            published="$ZIP"
+          fi
+          sha256="$(shasum -a 256 "$published" | cut -d ' ' -f 1)"
+          if ! grep -qE '^[0-9a-f]{64}$' <<<"$sha256"; then
+            echo "$published の sha256 を取れませんでした" >&2
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Point the cask at the release
+        working-directory: tap
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.publish.outputs.sha256 }}
+          ASSET_NAME: ${{ steps.publish.outputs.name }}
+        run: |
+          sed -i '' \
+            -e "s/^  version \".*\"\$/  version \"$VERSION\"/" \
+            -e "s/^  sha256 \".*\"\$/  sha256 \"$SHA256\"/" \
+            Casks/ediro.rb
+          if ! grep -q "^  version \"$VERSION\"\$" Casks/ediro.rb ||
+             ! grep -q "^  sha256 \"$SHA256\"\$" Casks/ediro.rb; then
+            echo "Casks/ediro.rb の version / sha256 を書き換えられませんでした" >&2
+            exit 1
+          fi
+          # url は sed で触らないので、配布物名との結合はここで見る。
+          if ! sed "s/#{version}/$VERSION/g" Casks/ediro.rb | grep -qF "/$ASSET_NAME\""; then
+            echo "Casks/ediro.rb の url が配布物名 $ASSET_NAME と一致しません" >&2
+            exit 1
+          fi
+          if git diff --quiet -- Casks/ediro.rb; then
+            echo "Casks/ediro.rb は既にこのリリースを指している"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit Casks/ediro.rb -m "Update ediro cask to $GITHUB_REF_NAME"
+          # 同じ tap を gw のリリースも書くので、間に入られていたら載せ直す。
+          git pull --rebase
+          git push
