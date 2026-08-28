@@ -33,6 +33,16 @@ final class MainWindowController: NSObject, NSWindowDelegate {
   func show() {
     window.makeKeyAndOrderFront(nil)
     NSApp.activate()
+    focusEditor()
+  }
+
+  /// 起動直後からそのまま打ち始められるようにする。
+  func focusEditor() {
+    guard let contentView = window.contentView else { return }
+    // NSHostingView はレイアウトを通すまで内側のビューを作らない。
+    contentView.layoutSubtreeIfNeeded()
+    guard let textView = firstTextView(in: contentView) else { return }
+    window.makeFirstResponder(textView)
   }
 
   /// 閉じるはアプリを隠すだけにする。下書きが常駐している前提の使い方に合わせる。
