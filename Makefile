@@ -2,12 +2,18 @@ CONFIG := release
 BUILD := .build/$(CONFIG)
 ARTIFACTS := artifacts
 
+## 版番号の正本。
+VERSION := 0.1.0
+
+## dist は VARIANT=dev の文脈から release のバンドルを指すので、名前をここで持つ。
+RELEASE_EXEC := Ediro
+
 ## 既定は開発用ビルド。日常的に使うビルドは `make release` で作る。
 ## 名前と bundle identifier が違うため、設定 (UserDefaults) と下書きの保存先も
 ## 別になる。開発中の操作が実際の下書きに触れない。
 VARIANT ?= dev
 ifeq ($(VARIANT),release)
-  EXEC := Ediro
+  EXEC := $(RELEASE_EXEC)
   NAME := Ediro
   BUNDLE_ID := com.gin0606.ediro
 else
@@ -17,13 +23,23 @@ else
 endif
 
 BUNDLE := .build/$(EXEC).app
+RELEASE_BUNDLE := .build/$(RELEASE_EXEC).app
+DIST := .build/$(RELEASE_EXEC)-$(VERSION).zip
 ICONSET := .build/$(EXEC).iconset
 ICNS := .build/$(EXEC).icns
 
-.PHONY: build test app run relaunch stop shot icon release clean
+.PHONY: build test app run relaunch stop shot icon release dist version dist-path clean
 
 build:
 	swift build -c $(CONFIG)
+
+## リリースの workflow がタグとの突き合わせに読む。
+version:
+	@echo $(VERSION)
+
+## リリースの workflow が配布物の在処を読む。
+dist-path:
+	@echo $(DIST)
 
 test:
 	swift test
@@ -48,6 +64,7 @@ app: build $(ICNS)
 	cp $(BUILD)/Ediro $(BUNDLE)/Contents/MacOS/$(EXEC)
 	cp $(ICNS) $(BUNDLE)/Contents/Resources/$(EXEC).icns
 	sed -e 's/@NAME@/$(NAME)/g' -e 's/@EXEC@/$(EXEC)/g' -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g' \
+		-e 's/@VERSION@/$(VERSION)/g' \
 		Support/Info.plist.in > $(BUNDLE)/Contents/Info.plist
 	codesign --force --sign - $(BUNDLE)
 	@echo "built $(BUNDLE) ($$(du -sh $(BUNDLE) | cut -f1))"
@@ -55,6 +72,11 @@ app: build $(ICNS)
 ## 日常的に使うビルド。作ったら /Applications へ自分で移す。
 release:
 	@$(MAKE) VARIANT=release app
+
+dist: release
+	@rm -f $(DIST)
+	ditto -c -k --keepParent $(RELEASE_BUNDLE) $(DIST)
+	@shasum -a 256 $(DIST)
 
 run: app
 	open $(BUNDLE)
