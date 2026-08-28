@@ -79,3 +79,18 @@ private func bodyFontSize(_ controller: EditorTextController) -> Double? {
   #expect(state.text == "打ち込んだ")
   #expect(state.metrics.characters == 5)
 }
+
+@Test func コピーは書式なしテキストだけをクリップボードに載せる() {
+  let state = makeState(text: "**太字**と# 見出し")
+  let controller = EditorTextController(state: state)
+  controller.textView.selectAll(nil)
+
+  let pasteboard = NSPasteboard(name: .init("ediro.test.\(UUID().uuidString)"))
+  pasteboard.clearContents()
+  controller.textView.writeSelection(
+    to: pasteboard, types: controller.textView.writablePasteboardTypes)
+
+  let written = pasteboard.types ?? []
+  #expect(!written.contains(.rtf), "書式付きデータが載っている: \(written)")
+  #expect(pasteboard.string(forType: .string) == "**太字**と# 見出し")
+}
