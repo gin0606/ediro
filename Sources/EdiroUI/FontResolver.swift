@@ -2,39 +2,51 @@ import AppKit
 import EdiroCore
 
 /// SyntaxStyle を実際の NSFont に落とす。
-///
-/// トレイトの付与に NSFontManager.convert は使わない。システムの等幅フォントに
-/// 対しては該当する書体を見つけられず、変換前のフォントをそのまま返してしまい、
-/// 太字・斜体が無言で効かなくなるため。フォントディスクリプタで指定する。
 public struct FontResolver {
   public let preferences: Preferences
+
+  /// 斜体のシアー量。一般的なイタリック角に合わせた約 12 度。
+  private static let slant = 0.22
 
   public init(preferences: Preferences) {
     self.preferences = preferences
   }
 
   public var bodyFont: NSFont {
-    font(named: preferences.fontName, size: preferences.fontSize)
+    weighted(size: preferences.fontSize, bold: false)
   }
 
   public func font(for style: SyntaxStyle) -> NSFont {
     let size = preferences.fontSize * style.scale
-    let base =
-      style.monospaced
-      ? NSFont.monospacedSystemFont(ofSize: size, weight: style.bold ? .bold : .regular)
-      : font(named: preferences.fontName, size: size)
-
-    var traits: NSFontDescriptor.SymbolicTraits = []
-    if style.bold { traits.insert(.bold) }
-    if style.italic { traits.insert(.italic) }
-    guard !traits.isEmpty else { return base }
-
-    let descriptor = base.fontDescriptor.withSymbolicTraits(traits)
-    return NSFont(descriptor: descriptor, size: size) ?? base
+    let base = weighted(size: size, bold: style.bold)
+    return style.italic ? Self.slanted(base, size: size) : base
   }
 
-  private func font(named name: String, size: Double) -> NSFont {
-    if !name.isEmpty, let font = NSFont(name: name, size: size) { return font }
-    return .monospacedSystemFont(ofSize: size, weight: .regular)
+  /// システムの等幅フォントでは weight を直接指定する。
+  /// ディスクリプタに .bold トレイトを付けても Semibold にしかならず、
+  /// 和文のフォールバック先が本文から一段しか太くならないため見分けが付かない。
+  private func weighted(size: Double, bold: Bool) -> NSFont {
+    guard !preferences.fontName.isEmpty,
+      let named = NSFont(name: preferences.fontName, size: size)
+    else {
+      return .monospacedSystemFont(ofSize: size, weight: bold ? .bold : .regular)
+    }
+    guard bold else { return named }
+
+    // withSymbolicTraits はマスクを合成せず置換するため、既存のトレイトに足す。
+    let traits = named.fontDescriptor.symbolicTraits.union(.bold)
+    return NSFont(descriptor: named.fontDescriptor.withSymbolicTraits(traits), size: size) ?? named
+  }
+
+  /// フォント行列を傾けて斜体にする。
+  ///
+  /// 和文には斜体の字面が無く、CoreText はフォールバック先へ slant を合成しない。
+  /// 行列を傾ければフォールバックされたグリフごと傾く。グリフの送り幅と行高は
+  /// 変わらないが、和文と欧文が隣接する箇所の詰めだけはわずかに動く。
+  /// NSAttributedString の .obliqueness は TextKit 2 の NSTextView では無視される。
+  private static func slanted(_ font: NSFont, size: Double) -> NSFont {
+    var matrix = AffineTransform(scale: size)
+    matrix.append(AffineTransform(m11: 1, m12: 0, m21: slant, m22: 1, tX: 0, tY: 0))
+    return NSFont(descriptor: font.fontDescriptor.withMatrix(matrix), size: size) ?? font
   }
 }

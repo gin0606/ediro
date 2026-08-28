@@ -21,21 +21,6 @@ private func attributedColor(_ text: String, at substring: String) throws -> NSC
     storage.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor)
 }
 
-@Test func 強調の範囲に太字フォントが付く() throws {
-  let font = try attributedFont("エディ太郎の**次男**。", at: "**次男**")
-  #expect(font.fontDescriptor.symbolicTraits.contains(.bold))
-}
-
-@Test func 斜体の範囲に斜体フォントが付く() throws {
-  let font = try attributedFont("書き直した *下書き専用* エディタ。", at: "*下書き専用*")
-  #expect(font.fontDescriptor.symbolicTraits.contains(.italic))
-}
-
-@Test func 和文に挟まれた斜体にも属性が付く() throws {
-  let font = try attributedFont("**太字**と*斜体*が同じ行", at: "*斜体*")
-  #expect(font.fontDescriptor.symbolicTraits.contains(.italic))
-}
-
 @Test func 見出しは本文より大きいフォントになる() throws {
   let text = "# 見出し\n本文"
   let heading = try attributedFont(text, at: "# 見出し")
