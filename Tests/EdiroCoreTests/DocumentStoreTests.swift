@@ -4,9 +4,7 @@ import Testing
 @testable import EdiroCore
 
 private func makeStore() -> DocumentStore {
-  let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-    .appending(path: "ediro-tests/\(UUID().uuidString)")
-  return DocumentStore(fileURL: directory.appending(path: "draft.md"))
+  DocumentStore(fileURL: TestArtifacts.directory().appending(path: "draft.md"))
 }
 
 @Test func 保存した本文を読み戻せる() throws {

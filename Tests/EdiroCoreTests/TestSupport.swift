@@ -1,28 +1,4 @@
-import AppKit
-import EdiroCore
 import Foundation
-
-@testable import EdiroUI
-
-/// 一時ディレクトリと専用の UserDefaults を持つ状態。テスト同士が
-/// 実際の下書きや設定に触れないようにする。
-func makeState(text: String = "") -> AppState {
-  let state = AppState(
-    documentStore: DocumentStore(fileURL: TestArtifacts.directory().appending(path: "draft.md")),
-    defaults: TestArtifacts.defaults())
-  state.text = text
-  return state
-}
-
-/// 状態の購読はメインアクターの次の実行まで反映されないので、条件が立つまで待つ。
-func waitUntil(_ condition: () -> Bool, timeout: Duration = .milliseconds(500)) async -> Bool {
-  let deadline = ContinuousClock.now + timeout
-  while ContinuousClock.now < deadline {
-    if condition() { return true }
-    try? await Task.sleep(for: .milliseconds(5))
-  }
-  return condition()
-}
 
 /// テストが作る一時ディレクトリと UserDefaults suite の後始末。
 ///
@@ -36,8 +12,8 @@ func waitUntil(_ condition: () -> Bool, timeout: Duration = .milliseconds(500)) 
 /// プロセスに束ねるため、EdiroCoreTests と EdiroUITests の掃除が同じ実行の中で
 /// 走る。接頭辞を揃えると、片方の掃除がもう片方の使用中の suite を消す。
 enum TestArtifacts {
-  static let suitePrefix = "ediro.tests."
-  static let root = URL(filePath: NSTemporaryDirectory()).appending(path: "ediro-tests/ui")
+  static let suitePrefix = "com.gin0606.ediro.tests."
+  static let root = URL(filePath: NSTemporaryDirectory()).appending(path: "ediro-tests/core")
 
   private static let swept: Bool = {
     sweep(root: root, suitePrefix: suitePrefix)
@@ -52,7 +28,9 @@ enum TestArtifacts {
   static func defaults() -> UserDefaults {
     _ = swept
     let suite = "\(suitePrefix)\(UUID().uuidString)"
-    return UserDefaults(suiteName: suite)!
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    return defaults
   }
 }
 

@@ -3,12 +3,7 @@ import Testing
 
 @testable import EdiroCore
 
-private func makeDefaults() -> UserDefaults {
-  let suite = "com.gin0606.ediro.tests.\(UUID().uuidString)"
-  let defaults = UserDefaults(suiteName: suite)!
-  defaults.removePersistentDomain(forName: suite)
-  return defaults
-}
+private func makeDefaults() -> UserDefaults { TestArtifacts.defaults() }
 
 @Test func 保存した設定を読み戻せる() {
   let defaults = makeDefaults()
