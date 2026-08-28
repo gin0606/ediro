@@ -4,27 +4,7 @@ import Testing
 
 @testable import EdiroUI
 
-private func makeState(text: String = "") -> AppState {
-  let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-    .appending(path: "ediro-controller-tests/\(UUID().uuidString)")
-  let state = AppState(
-    documentStore: DocumentStore(fileURL: directory.appending(path: "draft.md")),
-    defaults: UserDefaults(suiteName: "ediro.controller.\(UUID().uuidString)")!)
-  state.text = text
-  return state
-}
 
-/// 状態の購読はメインアクターの次の実行まで反映されないので、条件が立つまで待つ。
-private func waitUntil(
-  _ condition: () -> Bool, timeout: Duration = .milliseconds(500)
-) async -> Bool {
-  let deadline = ContinuousClock.now + timeout
-  while ContinuousClock.now < deadline {
-    if condition() { return true }
-    try? await Task.sleep(for: .milliseconds(5))
-  }
-  return condition()
-}
 
 private func bodyFontSize(_ controller: EditorTextController) -> Double? {
   let font = controller.textView.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
