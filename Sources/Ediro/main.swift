@@ -1,0 +1,3 @@
+import EdiroUI
+
+EdiroApp.run()
