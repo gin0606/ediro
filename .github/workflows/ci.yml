@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+# main を commit ごとの group にする。同じ group に積むと後続の push が pending の
+# 実行まで畳み、タグを打つ対象の commit に中断の記録が残る。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # ビルドに macOS 26 SDK と Swift 6.2 が要る。
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # レビュー前のコードをビルドして走らせるので、token を残さない。
+          persist-credentials: false
+
+      # runner イメージが入れ替わって落ちたときに、ログだけで切り分けられるようにする。
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Test
+        run: swift test
+
+      # swift test は配布物の組み立てを通らない。ここで組み立てないと、壊れが
+      # タグを push した後にしか分からない。
+      - name: Build the distribution
+        run: make dist
