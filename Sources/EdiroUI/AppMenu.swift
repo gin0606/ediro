@@ -3,14 +3,22 @@ import AppKit
 /// アプリケーションメニュー。Edit メニューが無いと NSTextView の
 /// Cmd+C / Cmd+V / Cmd+Z が効かないため、標準項目も自前で並べる。
 enum AppMenu {
-  static func build(target: AppDelegate) -> NSMenu {
+  /// メニューバーと、そのうち NSApp へ引き渡すものをまとめて返す。
+  /// 受け取る側がタイトル文字列で引き直さずに済ませるため。
+  struct Built {
+    let bar: NSMenu
+    let window: NSMenu
+  }
+
+  static func build(target: AppDelegate) -> Built {
     let main = NSMenu()
+    let window = windowMenu()
     main.addItem(submenu(appMenu(target: target)))
     main.addItem(submenu(editMenu()))
     main.addItem(submenu(viewMenu(target: target)))
     main.addItem(submenu(textMenu(target: target)))
-    main.addItem(submenu(windowMenu()))
-    return main
+    main.addItem(submenu(window))
+    return Built(bar: main, window: window)
   }
 
   private static func appMenu(target: AppDelegate) -> NSMenu {

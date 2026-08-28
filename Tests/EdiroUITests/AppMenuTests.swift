@@ -4,7 +4,7 @@ import Testing
 @testable import EdiroUI
 
 private func menuBar() -> NSMenu {
-  AppMenu.build(target: AppDelegate())
+  AppMenu.build(target: AppDelegate()).bar
 }
 
 private func menu(_ title: String) -> NSMenu? {
@@ -34,11 +34,23 @@ private func menu(_ title: String) -> NSMenu? {
 
 @Test func アプリ固有の項目はデリゲートに届く() throws {
   let delegate = AppDelegate()
-  let bar = AppMenu.build(target: delegate)
+  let bar = AppMenu.build(target: delegate).bar
   let text = try #require(bar.items.compactMap(\.submenu).first { $0.title == "Text" })
   for item in text.items {
     #expect(item.target === delegate)
   }
+}
+
+@Test func ウィンドウメニューはメニューバーに載っているものと同じ実体を返す() {
+  let built = AppMenu.build(target: AppDelegate())
+  #expect(built.bar.items.compactMap(\.submenu).contains { $0 === built.window })
+}
+
+@Test func フォントサイズの拡大はイコールキーに割り当てる() throws {
+  // "+" だと修飾前の文字と一致せず、⇧⌘= でも ⌘= でも発火しない
+  let text = try #require(menu("Text"))
+  let increase = try #require(text.items.first { $0.title == "Increase Font Size" })
+  #expect(increase.keyEquivalent == "=")
 }
 
 @Test func 全画面切替はControlとCommandの組み合わせになる() throws {
@@ -61,11 +73,4 @@ private func menu(_ title: String) -> NSMenu? {
   #expect(minimize.keyEquivalent == "m")
   // ウィンドウ操作は第一応答者へ流す
   #expect(minimize.target == nil)
-}
-
-@Test func フォントサイズの拡大はイコールキーに割り当てる() throws {
-  // "+" だと修飾前の文字と一致せず、⇧⌘= でも ⌘= でも発火しない
-  let text = try #require(menu("Text"))
-  let increase = try #require(text.items.first { $0.title == "Increase Font Size" })
-  #expect(increase.keyEquivalent == "=")
 }

@@ -19,10 +19,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     self.state = state
     self.windowController = controller
 
-    let menuBar = AppMenu.build(target: self)
-    NSApp.mainMenu = menuBar
+    let menu = AppMenu.build(target: self)
+    NSApp.mainMenu = menu.bar
     // ウィンドウ一覧の管理を macOS に任せる
-    NSApp.windowsMenu = menuBar.items.compactMap(\.submenu).first { $0.title == "Window" }
+    NSApp.windowsMenu = menu.window
     controller.show()
   }
 
