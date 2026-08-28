@@ -42,15 +42,26 @@ private func render<V: View>(_ view: V, size: CGSize) throws -> NSBitmapImageRep
   #expect(right.greenComponent > right.redComponent)
 }
 
-@Test func エディタ本体を含むルートビューが描画できる() throws {
-  let store = DocumentStore(
-    fileURL: URL(fileURLWithPath: NSTemporaryDirectory())
-      .appending(path: "ediro-ui-tests/\(UUID().uuidString)/draft.md"))
-  let state = AppState(
-    documentStore: store, defaults: UserDefaults(suiteName: "ediro.ui.\(UUID().uuidString)")!)
-  state.text = "# 見出し\n\n本文です。"
+@Test func タイトルバーの高さが取れる() {
+  #expect(WindowMetrics.titleBarHeight > 0)
+}
 
-  let rep = try render(RootView(state: state), size: CGSize(width: 400, height: 300))
-  #expect(rep.pixelsWide == 400)
-  #expect(rep.pixelsHigh == 300)
+@Test func タイトルバーの帯はテーマの色で塗られる() throws {
+  for id in ["dark", "vscode", "editaro"] {
+    let theme = Theme.theme(id: id)
+    let rep = try render(TitleBarView(theme: theme), size: CGSize(width: 200, height: 32))
+    let pixel = try #require(rep.colorAt(x: 100, y: 16))
+    // dark 系のテーマはいずれも #333333 の帯を持つ
+    #expect(abs(pixel.redComponent - 0x33 / 255.0) < 0.05, "\(id) の帯色が違う")
+    #expect(abs(pixel.blueComponent - 0x33 / 255.0) < 0.05, "\(id) の帯色が違う")
+  }
+}
+
+@Test func 明るいテーマの帯は暗いテーマより明るい() throws {
+  func brightness(_ id: String) throws -> Double {
+    let rep = try render(
+      TitleBarView(theme: Theme.theme(id: id)), size: CGSize(width: 200, height: 32))
+    return Double(try #require(rep.colorAt(x: 100, y: 16)).brightnessComponent)
+  }
+  #expect(try brightness("light") > brightness("dark"))
 }

@@ -11,7 +11,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     self.state = state
     window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+      styleMask: WindowMetrics.styleMask,
       backing: .buffered, defer: false)
 
     super.init()
