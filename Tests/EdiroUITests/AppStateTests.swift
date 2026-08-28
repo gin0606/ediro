@@ -143,3 +143,26 @@ private func state(on store: DocumentStore) -> AppState {
 
   #expect(await waitUntil({ (try? store.load()) == "待ってから書かれる本文" }, timeout: .seconds(5)))
 }
+
+@Test func 連続した打鍵はひとつの書き込みにまとめる() async throws {
+  let store = makeStore()
+  let app = AppState(
+    documentStore: store, defaults: TestArtifacts.defaults(), saveDelay: .milliseconds(200))
+
+  // 打鍵の間隔を待ちより短く取る。まとめられていなければ、打鍵ごとの書き込みが
+  // 同じ間隔で並ぶので、途中の本文がディスク上に現れる。
+  app.text = "あ"
+  try await Task.sleep(for: .milliseconds(60))
+  app.text = "あい"
+  try await Task.sleep(for: .milliseconds(60))
+  app.text = "あいう"
+
+  var seen: Set<String> = []
+  let deadline = ContinuousClock.now + .milliseconds(700)
+  while ContinuousClock.now < deadline {
+    if let text = try? store.load(), !text.isEmpty { seen.insert(text) }
+    try await Task.sleep(for: .milliseconds(5))
+  }
+
+  #expect(seen == ["あいう"], "途中の本文が書き出されている: \(seen.sorted())")
+}
