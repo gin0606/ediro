@@ -1,6 +1,12 @@
 import AppKit
 import EdiroCore
 
+/// 書体の解決結果。太い字面を持たないフォントでは、描画側で太らせる必要がある。
+public struct ResolvedFont {
+  public let font: NSFont
+  public let needsSyntheticBold: Bool
+}
+
 /// SyntaxStyle を実際の NSFont に落とす。
 public struct FontResolver {
   public let preferences: Preferences
@@ -13,29 +19,40 @@ public struct FontResolver {
   }
 
   public var bodyFont: NSFont {
-    weighted(size: preferences.fontSize, bold: false)
+    weighted(size: preferences.fontSize, bold: false).font
   }
 
-  public func font(for style: SyntaxStyle) -> NSFont {
+  public func resolve(for style: SyntaxStyle) -> ResolvedFont {
     let size = preferences.fontSize * style.scale
     let base = weighted(size: size, bold: style.bold)
-    return style.italic ? Self.slanted(base, size: size) : base
+    guard style.italic else { return base }
+    return ResolvedFont(
+      font: Self.slanted(base.font, size: size), needsSyntheticBold: base.needsSyntheticBold)
   }
 
   /// システムの等幅フォントでは weight を直接指定する。
   /// ディスクリプタに .bold トレイトを付けても Semibold にしかならず、
   /// 和文のフォールバック先が本文から一段しか太くならないため見分けが付かない。
-  private func weighted(size: Double, bold: Bool) -> NSFont {
+  private func weighted(size: Double, bold: Bool) -> ResolvedFont {
     guard !preferences.fontName.isEmpty,
       let named = NSFont(name: preferences.fontName, size: size)
     else {
-      return .monospacedSystemFont(ofSize: size, weight: bold ? .bold : .regular)
+      return ResolvedFont(
+        font: .monospacedSystemFont(ofSize: size, weight: bold ? .bold : .regular),
+        needsSyntheticBold: false)
     }
-    guard bold else { return named }
+    guard bold else { return ResolvedFont(font: named, needsSyntheticBold: false) }
 
     // withSymbolicTraits はマスクを合成せず置換するため、既存のトレイトに足す。
     let traits = named.fontDescriptor.symbolicTraits.union(.bold)
-    return NSFont(descriptor: named.fontDescriptor.withSymbolicTraits(traits), size: size) ?? named
+    let resolved = NSFont(descriptor: named.fontDescriptor.withSymbolicTraits(traits), size: size)
+
+    // 太い字面を持たないフォントでは、AppKit は変換に失敗するか同じ書体を返す。
+    // 一般的な描画系と同じく、字面が無ければ縁を太らせて合成する。
+    guard let resolved, resolved.fontName != named.fontName else {
+      return ResolvedFont(font: named, needsSyntheticBold: true)
+    }
+    return ResolvedFont(font: resolved, needsSyntheticBold: false)
   }
 
   /// フォント行列を傾けて斜体にする。

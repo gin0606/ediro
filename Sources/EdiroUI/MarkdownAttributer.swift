@@ -3,6 +3,9 @@ import EdiroCore
 
 /// Markdown のトークンを NSTextStorage の属性に反映する。
 public struct MarkdownAttributer {
+  /// 合成した太字の濃さ。実際のボールド字面と同程度になる値。
+  static let syntheticBoldStroke = -5.0
+
   private let theme: Theme
   private let preferences: Preferences
   private let highlighter = MarkdownHighlighter()
@@ -28,9 +31,16 @@ public struct MarkdownAttributer {
 
     for token in highlighter.tokens(in: text) {
       let style = palette.style(for: token.kind)
-      storage.addAttributes(
-        [.font: resolver.font(for: style), .foregroundColor: style.color.nsColor],
-        range: token.range)
+      let resolved = resolver.resolve(for: style)
+      var attributes: [NSAttributedString.Key: Any] = [
+        .font: resolved.font, .foregroundColor: style.color.nsColor,
+      ]
+      if resolved.needsSyntheticBold {
+        // 負の値は塗りと縁の両方を描く。縁の色を前景と揃えて太さだけを足す。
+        attributes[.strokeWidth] = Self.syntheticBoldStroke
+        attributes[.strokeColor] = style.color.nsColor
+      }
+      storage.addAttributes(attributes, range: token.range)
     }
   }
 }

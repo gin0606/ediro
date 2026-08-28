@@ -11,7 +11,7 @@ private func traits(_ font: NSFont) -> NSFontDescriptor.SymbolicTraits {
 @Test func 見出しは本文より大きく太い() {
   let palette = SyntaxPalette(theme: .fallback)
   let resolver = FontResolver(preferences: .default)
-  let heading = resolver.font(for: palette.style(for: .heading(level: 1)))
+  let heading = resolver.resolve(for: palette.style(for: .heading(level: 1))).font
   #expect(heading.pointSize > resolver.bodyFont.pointSize)
 }
 
