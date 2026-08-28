@@ -27,34 +27,41 @@ public struct Token: Equatable, Sendable {
 ///
 /// CommonMark に完全準拠はしない。下書き用途で視認性に効く要素だけを拾う。
 public struct MarkdownHighlighter: Sendable {
-  private static let patterns: [(Token.Kind, String)] = [
+  /// パターン表が示す種別。見出しだけは捕捉した `#` の数でレベルが決まるので、
+  /// 表の時点では確定しない。`Token.Kind` に不正なレベルの値を置かずに済ませる。
+  private enum Matched {
+    case fixed(Token.Kind)
+    case heading
+  }
+
+  private static let patterns: [(Matched, String)] = [
     // フェンス付きコードブロックは他の記法より先に検出して優先させる
-    (.codeBlock, "(?m)^```[\\s\\S]*?^```"),
-    (.heading(level: 0), "(?m)^(#{1,6})[ \\t]+.*$"),
-    (.blockquote, "(?m)^[ \\t]*>[ \\t]?.*$"),
-    (.listMarker, "(?m)^[ \\t]*(?:[-*+]|\\d+\\.)[ \\t]+"),
-    (.link, "\\[[^\\]\\n]*\\]\\([^)\\n]*\\)"),
+    (.fixed(.codeBlock), "(?m)^```[\\s\\S]*?^```"),
+    (.heading, "(?m)^(#{1,6})[ \\t]+.*$"),
+    (.fixed(.blockquote), "(?m)^[ \\t]*>[ \\t]?.*$"),
+    (.fixed(.listMarker), "(?m)^[ \\t]*(?:[-*+]|\\d+\\.)[ \\t]+"),
+    (.fixed(.link), "\\[[^\\]\\n]*\\]\\([^)\\n]*\\)"),
     // 直前直後の文字種で境界を判定しない。ICU の \\w は日本語にもマッチするため、
     // 「と*斜体*が」のように和文へ挟まれた記法を取りこぼす。
-    (.strong, "(?<!\\*)\\*\\*(?!\\s)[^*\\n]+(?<!\\s)\\*\\*(?!\\*)"),
-    (.emphasis, "(?<!\\*)\\*(?!\\s|\\*)[^*\\n]+(?<!\\s)\\*(?!\\*)"),
-    (.inlineCode, "`[^`\\n]+`")
+    (.fixed(.strong), "(?<!\\*)\\*\\*(?!\\s)[^*\\n]+(?<!\\s)\\*\\*(?!\\*)"),
+    (.fixed(.emphasis), "(?<!\\*)\\*(?!\\s|\\*)[^*\\n]+(?<!\\s)\\*(?!\\*)"),
+    (.fixed(.inlineCode), "`[^`\\n]+`")
   ]
 
   /// 打鍵のたびに作り直されるので、コンパイル済みの正規表現は使い回す。
   /// `NSRegularExpression` は不変で、複数スレッドから同時に使える。
   public static let shared = MarkdownHighlighter()
 
-  private let expressions: [(Token.Kind, NSRegularExpression)]
+  private let expressions: [(Matched, NSRegularExpression)]
 
   public init() {
     // パターンはリテラルで、実行時入力を含まない。コンパイルに失敗するのは
     // 上のパターンの記述ミスに限られるので、その場で落として気付けるようにする。
-    expressions = Self.patterns.map { kind, pattern in
+    expressions = Self.patterns.map { matched, pattern in
       guard let regex = try? NSRegularExpression(pattern: pattern) else {
         preconditionFailure("MarkdownHighlighter の正規表現が不正: \(pattern)")
       }
-      return (kind, regex)
+      return (matched, regex)
     }
   }
 
@@ -64,19 +71,18 @@ public struct MarkdownHighlighter: Sendable {
     var claimed: [NSRange] = []
     var tokens: [Token] = []
 
-    for (kind, regex) in expressions {
+    for (matched, regex) in expressions {
       for match in regex.matches(in: text, range: full) {
         let range = match.range
         if claimed.contains(where: { NSIntersectionRange($0, range).length > 0 }) { continue }
 
-        let resolved: Token.Kind
-        if case .heading = kind {
-          resolved = .heading(level: match.range(at: 1).length)
-        } else {
-          resolved = kind
+        let kind: Token.Kind
+        switch matched {
+        case .fixed(let fixed): kind = fixed
+        case .heading: kind = .heading(level: match.range(at: 1).length)
         }
         claimed.append(range)
-        tokens.append(Token(kind: resolved, range: range))
+        tokens.append(Token(kind: kind, range: range))
       }
     }
 
