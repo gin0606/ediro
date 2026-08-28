@@ -1,6 +1,7 @@
-// 指定したアプリのウィンドウ ID を出力する。
+// 指定したアプリのウィンドウ ID を出力する。渡すのはバンドル名 (CFBundleName)
+// で、実行ファイル名ではない。ウィンドウの所有者名は前者で報告される。
 //
-//   swift Tools/winid.swift Ediro
+//   swift Tools/winid.swift 'Ediro Dev'
 //
 // アプリはメニューバーや画面外の内部ウィンドウも所有しているため、
 // 表示中 (onscreen) のレイヤ 0 に限ったうえで最大面積のものを選ぶ。
@@ -8,7 +9,7 @@ import CoreGraphics
 import Foundation
 
 guard CommandLine.arguments.count > 1 else {
-  FileHandle.standardError.write("usage: winid.swift <アプリ名>\n".data(using: .utf8)!)
+  FileHandle.standardError.write("usage: winid.swift <バンドル名>\n".data(using: .utf8)!)
   exit(2)
 }
 let wanted = CommandLine.arguments[1]

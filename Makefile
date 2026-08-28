@@ -66,13 +66,15 @@ relaunch: stop run
 
 ## 起動中のウィンドウを撮影する。前面に他アプリがあっても対象だけを撮る。
 ## 起動直後はウィンドウがまだ現れず描画も間に合わないため、見つかるまで待つ。
+## 探すのは実行ファイル名 ($(EXEC)) ではなくバンドル名 ($(NAME))。ウィンドウの
+## 所有者名は CFBundleName で、実行ファイル名とは別物。
 shot:
 	@mkdir -p $(ARTIFACTS)
 	@id=""; for i in 1 2 3 4 5; do \
-		id=$$(swift Tools/winid.swift $(EXEC) 2>/dev/null) && break; \
+		id=$$(swift Tools/winid.swift '$(NAME)' 2>/dev/null) && break; \
 		sleep 1; \
 	done; \
-	if [ -z "$$id" ]; then echo "$(EXEC) のウィンドウが見つかりません" >&2; exit 1; fi; \
+	if [ -z "$$id" ]; then echo "$(NAME) のウィンドウが見つかりません" >&2; exit 1; fi; \
 	screencapture -x -o -T 1 -l $$id -t png $(ARTIFACTS)/window.png && \
 		echo "captured $(ARTIFACTS)/window.png"
 
