@@ -18,9 +18,11 @@ struct NavBarView: View {
         Text(counter).lineLimit(1).layoutPriority(1)
       }
 
-      // 退避先は名前そのものが用件なので、切り詰めるなら中ほどを落とす
       ForEach(labels.notices, id: \.text) { notice in
-        Text(notice.text).lineLimit(1).truncationMode(.middle).help(notice.detail)
+        Text(notice.text)
+          .lineLimit(1)
+          .truncationMode(notice.truncation == .middle ? .middle : .tail)
+          .help(notice.detail)
       }
 
       Spacer()

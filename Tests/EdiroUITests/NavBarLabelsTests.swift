@@ -36,3 +36,13 @@ private func labels(quarantined: String? = nil, error: String? = nil) -> NavBarL
   #expect(notices.contains { $0.text.contains("draft.md.unreadable-x") })
   #expect(notices.contains { $0.text.contains("保存できませんでした") })
 }
+
+@Test func 切り詰めは残すべき側で決める() throws {
+  // 退避先はファイル名の末尾の時刻でどれを指すかが決まる
+  let quarantine = try #require(labels(quarantined: "draft.md.unreadable-2026").notices.first)
+  #expect(quarantine.truncation == .middle)
+
+  // 失敗の理由は先頭に出る。末尾は保存先の名前
+  let failure = try #require(labels(error: "保存できませんでした: 理由").notices.first)
+  #expect(failure.truncation == .tail)
+}
