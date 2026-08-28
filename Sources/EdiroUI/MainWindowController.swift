@@ -5,7 +5,7 @@ import SwiftUI
 /// ウィンドウの生成と、SwiftUI 側では表現できない挙動を受け持つ。
 final class MainWindowController: NSObject, NSWindowDelegate {
   private let state: AppState
-  private let window: NSWindow
+  let window: NSWindow
 
   init(state: AppState) {
     self.state = state
@@ -23,6 +23,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     window.contentView = NSHostingView(rootView: RootView(state: state))
     window.delegate = self
     window.setFrameAutosaveName("MainWindow")
+    window.contentMinSize = NSSize(width: 320, height: 200)
     if window.frame.origin == .zero { window.center() }
 
     observeAlwaysOnTop()
