@@ -29,11 +29,15 @@ stop:
 relaunch: stop run
 
 ## 起動中のウィンドウを撮影する。前面に他アプリがあっても対象だけを撮る。
-## 起動直後は描画が間に合わないことがあるため少し待ってから撮る。
+## 起動直後はウィンドウがまだ現れず描画も間に合わないため、見つかるまで待つ。
 shot:
 	@mkdir -p $(ARTIFACTS)
-	@id=$$(swift Tools/winid.swift $(APP)) && \
-		screencapture -x -o -T 1 -l $$id -t png $(ARTIFACTS)/window.png && \
+	@id=""; for i in 1 2 3 4 5; do \
+		id=$$(swift Tools/winid.swift $(APP) 2>/dev/null) && break; \
+		sleep 1; \
+	done; \
+	if [ -z "$$id" ]; then echo "$(APP) のウィンドウが見つかりません" >&2; exit 1; fi; \
+	screencapture -x -o -T 1 -l $$id -t png $(ARTIFACTS)/window.png && \
 		echo "captured $(ARTIFACTS)/window.png"
 
 clean:
