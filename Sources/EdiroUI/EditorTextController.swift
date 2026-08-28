@@ -110,6 +110,20 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
     state.text = textView.string
   }
 
+  /// 改行したときに前の行と同じ深さから書き始められるようにする。
+  /// 引き継ぐ空白が無い行では既定の改行に任せ、取り消し操作や入力中の
+  /// 変換に手を加えない。
+  public func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+    guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+
+    let indent = Indentation.leadingWhitespace(
+      in: textView.string, at: textView.selectedRange().location)
+    guard !indent.isEmpty else { return false }
+
+    textView.insertText("\n" + indent, replacementRange: textView.selectedRange())
+    return true
+  }
+
   /// 属性の付け直しは編集処理が終わったこの時点で行う。
   public func textStorage(
     _ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,

@@ -94,3 +94,39 @@ private func bodyFontSize(_ controller: EditorTextController) -> Double? {
   #expect(!written.contains(.rtf), "書式付きデータが載っている: \(written)")
   #expect(pasteboard.string(forType: .string) == "**太字**と# 見出し")
 }
+
+private func insertNewline(_ controller: EditorTextController) {
+  _ = controller.textView(
+    controller.textView, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+}
+
+@Test func 改行すると前の行のインデントを引き継ぐ() {
+  let state = makeState()
+  let controller = EditorTextController(state: state)
+  controller.textView.string = "    ネストした行"
+  controller.textView.setSelectedRange(NSRange(location: 12, length: 0))
+
+  insertNewline(controller)
+  #expect(controller.textView.string == "    ネストした行\n    ")
+}
+
+@Test func インデントのない行では余計な空白を足さない() {
+  let state = makeState()
+  let controller = EditorTextController(state: state)
+  controller.textView.string = "ふつうの行"
+  controller.textView.setSelectedRange(NSRange(location: 5, length: 0))
+
+  // 既定の改行に委ねるので、この呼び出しでは文字列が変わらない
+  insertNewline(controller)
+  #expect(controller.textView.string == "ふつうの行")
+}
+
+@Test func 行の途中で改行しても深さを保つ() {
+  let state = makeState()
+  let controller = EditorTextController(state: state)
+  controller.textView.string = "  あいうえお"
+  controller.textView.setSelectedRange(NSRange(location: 4, length: 0))
+
+  insertNewline(controller)
+  #expect(controller.textView.string == "  あい\n  うえお")
+}
