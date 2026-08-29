@@ -2,8 +2,15 @@ CONFIG := release
 BUILD := .build/$(CONFIG)
 ARTIFACTS := artifacts
 
-## 版番号の正本。
-VERSION := 0.1.3
+## リリースの workflow は版を make の引数で渡す。環境変数を見ないのは、VERSION が
+## 他の用途で export されている環境で黙って乗っ取られないようにするため。
+ifneq ($(origin VERSION), command line)
+  ## 版タグ以外を拾うと、その文字列で sed の置換と配布物のパスが壊れる。
+  VERSION := $(patsubst v%,%,$(shell git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null))
+endif
+ifeq ($(strip $(VERSION)),)
+  VERSION := 0.0.0
+endif
 
 ## dist は VARIANT=dev の文脈から release のバンドルを指すので、名前をここで持つ。
 RELEASE_EXEC := Ediro
@@ -28,14 +35,10 @@ DIST := .build/$(RELEASE_EXEC)-$(VERSION).zip
 ICONSET := .build/$(EXEC).iconset
 ICNS := .build/$(EXEC).icns
 
-.PHONY: build test app run relaunch stop shot icon release dist version dist-path clean
+.PHONY: build test app run relaunch stop shot icon release dist dist-path clean
 
 build:
 	swift build -c $(CONFIG)
-
-## リリースの workflow がタグとの突き合わせに読む。
-version:
-	@echo $(VERSION)
 
 ## リリースの workflow が配布物の在処を読む。
 dist-path:

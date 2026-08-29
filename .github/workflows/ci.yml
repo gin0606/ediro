@@ -26,6 +26,9 @@ jobs:
         with:
           # レビュー前のコードをビルドして走らせるので、token を残さない。
           persist-credentials: false
+          # 版番号をタグから導出する経路を、ここで実際に通す。タグを取らないと
+          # git describe が失敗して既定値に落ち、導出の壊れが CI をすり抜ける。
+          fetch-depth: 0
 
       # runner イメージが入れ替わって落ちたときに、ログだけで切り分けられるようにする。
       - name: Show the toolchain

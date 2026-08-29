@@ -28,18 +28,15 @@ jobs:
           xcodebuild -version
           swift --version
 
-      # ずれたまま配ると Info.plist とリリース名が食い違うので、ビルドの前に落とす。
-      # 版番号は CFBundleVersion にも入るので、その値域 (整数 3 つまで) も見る。
-      - name: Check the tag against VERSION
+      # 整数 3 つの形に限る。CFBundleVersion はこれより緩い値も受けるが、v0.1.4 の
+      # ドットを落とした v0.14 は 0.14 として cask に載り、次に出す版を brew が
+      # 降格とみなす。形だけを見るので、版の大小は確かめていない。
+      - name: Check the tag
         id: version
         run: |
-          version="$(make -s version)"
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "タグ $GITHUB_REF_NAME と Makefile の VERSION ($version) が一致しません" >&2
-            exit 1
-          fi
-          if ! printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+){0,2}$'; then
-            echo "VERSION ($version) が CFBundleVersion の値域に収まりません" >&2
+          version="${GITHUB_REF_NAME#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "タグ $GITHUB_REF_NAME が x.y.z の形をしていません" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -49,9 +46,11 @@ jobs:
 
       - name: Build the distribution zip
         id: dist
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          make dist
-          echo "path=$(make -s dist-path)" >> "$GITHUB_OUTPUT"
+          make dist VERSION="$VERSION"
+          echo "path=$(make -s dist-path VERSION="$VERSION")" >> "$GITHUB_OUTPUT"
 
       # リリースの公開は取り消せないので、secrets と tap の実在は公開より前に確かめる。
       - uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
