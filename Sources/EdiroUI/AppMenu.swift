@@ -49,7 +49,6 @@ enum AppMenu {
 
   private static func viewMenu(target: AppDelegate) -> NSMenu {
     let menu = NSMenu(title: "View")
-    menu.addItem(item("Close", #selector(NSApplication.hide(_:)), key: "w"))
     menu.addItem(
       item(
         "Toggle Full Screen", #selector(AppDelegate.toggleFullScreen(_:)), key: "f",
@@ -70,10 +69,14 @@ enum AppMenu {
     return menu
   }
 
-  /// 並び順と項目は macOS の標準に合わせる。NSApp.windowsMenu に渡すと、
-  /// 開いているウィンドウの一覧がシステム側で追加される。
+  /// NSApp.windowsMenu に渡すと、開いているウィンドウの一覧がシステム側で
+  /// 追加される。Minimize 以下の並びは macOS の標準に合わせる。
   private static func windowMenu() -> NSMenu {
     let menu = NSMenu(title: "Window")
+    // 標準では File メニューに置く項目だが、このアプリは File を持たない。
+    // 宛先を固定すると、バージョン情報のような別ウィンドウが前面にいても
+    // 本体の窓に届いてしまう。
+    menu.addItem(item("Close", #selector(NSWindow.performClose(_:)), key: "w"))
     menu.addItem(item("Minimize", #selector(NSWindow.performMiniaturize(_:)), key: "m"))
     menu.addItem(item("Zoom", #selector(NSWindow.performZoom(_:))))
     menu.addItem(.separator())

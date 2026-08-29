@@ -46,6 +46,25 @@ import Testing
   #expect(controller.windowShouldClose(controller.window) == false)
 }
 
+@Test func 設定が開いているうちの閉じる操作は設定だけを閉じる() {
+  let state = makeState()
+  state.isShowingPreferences = true
+  let controller = MainWindowController(state: state)
+
+  #expect(controller.windowShouldClose(controller.window) == false)
+  #expect(state.isShowingPreferences == false)
+}
+
+@Test func キーボードからの閉じる操作も同じ判断を通る() {
+  let state = makeState()
+  state.isShowingPreferences = true
+  let controller = MainWindowController(state: state)
+
+  controller.window.performClose(nil)
+
+  #expect(state.isShowingPreferences == false)
+}
+
 @Test func テーマの明暗がウィンドウの外観に反映される() async {
   let state = makeState()
   state.preferences.themeID = "dark"

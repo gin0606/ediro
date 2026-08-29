@@ -64,6 +64,19 @@ private func menu(_ title: String) -> NSMenu? {
   #expect(app.items.first?.title == "About Ediro")
 }
 
+@Test func 閉じるはウィンドウメニューから応答連鎖に流す() throws {
+  let window = try #require(menu("Window"))
+  let close = try #require(window.items.first { $0.title == "Close" })
+  #expect(close.keyEquivalent == "w")
+  #expect(close.target == nil)
+  #expect(close.action == #selector(NSWindow.performClose(_:)))
+}
+
+@Test func 閉じるは表示メニューに残っていない() throws {
+  let view = try #require(menu("View"))
+  #expect(!view.items.map(\.title).contains("Close"))
+}
+
 @Test func ウィンドウメニューに標準項目がある() throws {
   let window = try #require(menu("Window"))
   #expect(window.items.map(\.title).contains("Minimize"))

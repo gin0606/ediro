@@ -2,14 +2,22 @@ import AppKit
 import EdiroCore
 import SwiftUI
 
+/// 本体のウィンドウ。閉じるボタンは既定の経路で windowShouldClose(_:) に届くが、
+/// performClose(_:) の既定は false を返されると警告音で応じる。
+final class MainWindow: NSWindow {
+  override func performClose(_ sender: Any?) {
+    if delegate?.windowShouldClose?(self) ?? true { close() }
+  }
+}
+
 /// ウィンドウの生成と、SwiftUI 側では表現できない挙動を受け持つ。
 final class MainWindowController: NSObject, NSWindowDelegate {
   private let state: AppState
-  let window: NSWindow
+  let window: MainWindow
 
   init(state: AppState) {
     self.state = state
-    window = NSWindow(
+    window = MainWindow(
       contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
       styleMask: WindowMetrics.styleMask,
       backing: .buffered, defer: false)
@@ -47,6 +55,10 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
   /// 閉じるはアプリを隠すだけにする。下書きが常駐している前提の使い方に合わせる。
   func windowShouldClose(_ sender: NSWindow) -> Bool {
+    if state.isShowingPreferences {
+      state.isShowingPreferences = false
+      return false
+    }
     NSApp.hide(nil)
     return false
   }
