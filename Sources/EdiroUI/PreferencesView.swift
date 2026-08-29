@@ -3,7 +3,6 @@ import SwiftUI
 
 struct PreferencesView: View {
   @Bindable var state: AppState
-  private var catalog: FontCatalog { .installed }
 
   private var theme: Theme { state.theme }
 
@@ -35,16 +34,8 @@ struct PreferencesView: View {
       }
 
       LabeledContent("Font Family") {
-        Picker("", selection: $state.preferences.fontName) {
-          Text("（既定）").tag("")
-          Section("等幅") {
-            ForEach(catalog.monospaced) { Text($0.displayName).tag($0.postScriptName) }
-          }
-          Section("標準") {
-            ForEach(catalog.proportional) { Text($0.displayName).tag($0.postScriptName) }
-          }
-        }
-        .labelsHidden()
+        FontFamilyPicker(selection: $state.preferences.fontName)
+          .frame(maxWidth: .infinity)
       }
 
       LabeledContent("Tab Size") {
