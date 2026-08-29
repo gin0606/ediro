@@ -12,7 +12,7 @@ import Foundation
 /// プロセスに束ねるため、EdiroCoreTests と EdiroUITests の掃除が同じ実行の中で
 /// 走る。接頭辞を揃えると、片方の掃除がもう片方の使用中の suite を消す。
 enum TestArtifacts {
-  static let suitePrefix = "com.gin0606.ediro.tests."
+  static let suitePrefix = "me.gin0606.ediro.tests."
   static let root = URL(filePath: NSTemporaryDirectory()).appending(path: "ediro-tests/core")
 
   private static let swept: Bool = {

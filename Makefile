@@ -15,11 +15,11 @@ VARIANT ?= dev
 ifeq ($(VARIANT),release)
   EXEC := $(RELEASE_EXEC)
   NAME := Ediro
-  BUNDLE_ID := com.gin0606.ediro
+  BUNDLE_ID := me.gin0606.ediro
 else
   EXEC := EdiroDev
   NAME := Ediro Dev
-  BUNDLE_ID := com.gin0606.ediro.dev
+  BUNDLE_ID := me.gin0606.ediro.dev
 endif
 
 BUNDLE := .build/$(EXEC).app
