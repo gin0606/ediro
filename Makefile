@@ -3,7 +3,7 @@ BUILD := .build/$(CONFIG)
 ARTIFACTS := artifacts
 
 ## 版番号の正本。
-VERSION := 0.1.1
+VERSION := 0.1.2
 
 ## dist は VARIANT=dev の文脈から release のバンドルを指すので、名前をここで持つ。
 RELEASE_EXEC := Ediro
