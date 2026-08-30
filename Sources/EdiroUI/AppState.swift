@@ -110,9 +110,12 @@ public final class AppState {
   }
 
   /// 終了時など、待たずに確実に書き出したい場面で使う。
-  public func flush() {
+  /// 書き出す必要が無かったか、書き出せたなら `true`。
+  @discardableResult
+  public func flush() -> Bool {
     saveTask?.cancel()
-    guard isDirty else { return }
+    guard isDirty else { return true }
     write(text)
+    return !isDirty
   }
 }

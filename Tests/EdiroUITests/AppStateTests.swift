@@ -65,6 +65,27 @@ private func state(on store: DocumentStore) -> AppState {
   #expect(app.quarantined == nil)
 }
 
+@Test func 書き出せなければflushは失敗を返す() throws {
+  // 保存先の親を通常ファイルにしておくと、ディレクトリを作れず保存が失敗する
+  let root = TestArtifacts.directory()
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  let blocker = root.appending(path: "blocked")
+  try Data().write(to: blocker)
+
+  let app = state(on: DocumentStore(fileURL: blocker.appending(path: "draft.md")))
+  app.text = "書けない本文"
+
+  #expect(app.flush() == false, "保存できていないのに成功を返している")
+}
+
+@Test func 書き出す必要が無ければflushは成功を返す() throws {
+  let app = state(on: makeStore())
+  #expect(app.flush(), "編集していないのに失敗を返している")
+
+  app.text = "書ける本文"
+  #expect(app.flush())
+}
+
 @Test func 保存に失敗した理由を画面に出す() throws {
   // 保存先の親を通常ファイルにしておくと、ディレクトリを作れず保存だけが失敗する。
   // 読み込みは「ファイルが無い」を空文字で返すので、退避の経路には入らない。

@@ -38,11 +38,31 @@ public struct DocumentStore: Sendable {
     return try String(contentsOf: fileURL, encoding: .utf8)
   }
 
+  /// 直前の版の置き場所。
+  ///
+  /// 全消しのような誤操作はアプリ内の取り消しで戻せるが、それは再起動で失われる。
+  /// 残るのは 1 世代だけで、保存のたびに入れ替わる。
+  public var previousURL: URL {
+    fileURL.appendingPathExtension("previous")
+  }
+
   /// 書き込みは atomic に行う。保存中のクラッシュで本文が壊れるのを避けるため。
+  /// 上書きする前に、今ディスクにある本文を直前の版として残す。
   public func save(_ text: String) throws {
     let directory = fileURL.deletingLastPathComponent()
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try keepPreviousVersion()
     try text.write(to: fileURL, atomically: true, encoding: .utf8)
+  }
+
+  /// 今ディスクにある本文を直前の版として複製する。
+  ///
+  /// 移動ではなく複製にするのは、この後の書き込みが失敗したときに保存先を
+  /// 空にしないため。読めないファイルは `quarantine()` が退避するので、
+  /// 直前の版で潰してはいけない。
+  private func keepPreviousVersion() throws {
+    guard let current = try? Data(contentsOf: fileURL) else { return }
+    try current.write(to: previousURL, options: .atomic)
   }
 
   /// 読めなかった本文を隣に退避し、退避先を返す。

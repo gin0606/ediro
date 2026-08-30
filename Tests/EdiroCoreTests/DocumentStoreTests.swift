@@ -43,6 +43,44 @@ private func makeStore() -> DocumentStore {
   #expect(DocumentStore.directoryName(bundleName: nil, bundleIdentifier: nil) == "Ediro")
 }
 
+@Test func 上書きすると直前の版が残る() throws {
+  let store = makeStore()
+  try store.save("最初の本文")
+  try store.save("書き換えた本文")
+
+  #expect(try store.load() == "書き換えた本文")
+  #expect(try String(contentsOf: store.previousURL, encoding: .utf8) == "最初の本文")
+}
+
+@Test func 全消ししても直前の版から戻せる() throws {
+  let store = makeStore()
+  try store.save("失いたくない下書き")
+  try store.save("")
+
+  #expect(try store.load() == "")
+  #expect(try String(contentsOf: store.previousURL, encoding: .utf8) == "失いたくない下書き")
+}
+
+@Test func 初回保存では直前の版を作らない() throws {
+  let store = makeStore()
+  try store.save("最初の本文")
+  #expect(!FileManager.default.fileExists(atPath: store.previousURL.path(percentEncoded: false)))
+}
+
+@Test func 退避待ちのファイルを直前の版で潰さない() throws {
+  let store = makeStore()
+  try FileManager.default.createDirectory(
+    at: store.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+  // UTF-8 として読めないバイト列。退避の対象で、複製してよいものではない
+  try Data([0xFF, 0xFE]).write(to: store.fileURL)
+
+  let moved = try #require(try store.quarantine())
+  try store.save("その後に書いた本文")
+
+  #expect(try Data(contentsOf: moved) == Data([0xFF, 0xFE]))
+  #expect(!FileManager.default.fileExists(atPath: store.previousURL.path(percentEncoded: false)))
+}
+
 @Test func 退避すると元のファイルが別名で残る() throws {
   let store = makeStore()
   try store.save("読めなくなる前の本文")

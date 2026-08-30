@@ -37,8 +37,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     return true
   }
 
-  public func applicationWillTerminate(_ notification: Notification) {
-    state?.flush()
+  public func applicationShouldTerminate(
+    _ sender: NSApplication
+  ) -> NSApplication.TerminateReply {
+    guard let state else { return .terminateNow }
+    if state.flush() { return .terminateNow }
+
+    let alert = NSAlert()
+    alert.messageText = "下書きを保存できませんでした"
+    alert.informativeText =
+      (state.storageError ?? "理由が分かりません。")
+      + "\n\nこのまま終了すると、書いた内容は失われます。"
+    alert.addButton(withTitle: "終了しない")
+    alert.addButton(withTitle: "終了する")
+    return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow
   }
 
   @objc func showAbout(_ sender: Any?) {
