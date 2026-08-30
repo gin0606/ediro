@@ -2,6 +2,7 @@ import AppKit
 import EdiroCore
 import SwiftUI
 import Testing
+import TestSupport
 
 @testable import EdiroUI
 
@@ -45,7 +46,7 @@ private func troubledState() throws -> AppState {
   try Data([0xFF, 0xFE]).write(to: file)
 
   let app = AppState(
-    documentStore: DocumentStore(fileURL: file), defaults: TestArtifacts.defaults(),
+    documentStore: DocumentStore(fileURL: file), defaults: InMemoryStore(),
     saveDelay: .zero)
   app.preferences.themeID = flatTheme.id
   app.text = "本文\n2 行め"

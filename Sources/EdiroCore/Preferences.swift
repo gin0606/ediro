@@ -42,8 +42,8 @@ extension Preferences {
     static let tabSize = "tabSize"
   }
 
-  /// UserDefaults は外界なので、欠けた値・壊れた値は既定値で補う。
-  public static func load(from defaults: UserDefaults) -> Preferences {
+  /// 設定の置き場所は外界なので、欠けた値・壊れた値は既定値で補う。
+  public static func load(from defaults: some KeyValueStore) -> Preferences {
     var preferences = Preferences.default
     if let theme = defaults.string(forKey: Key.theme) { preferences.themeID = theme }
     if defaults.object(forKey: Key.fontSize) != nil {
@@ -57,7 +57,7 @@ extension Preferences {
     return preferences
   }
 
-  public func save(to defaults: UserDefaults) {
+  public func save(to defaults: some KeyValueStore) {
     defaults.set(themeID, forKey: Key.theme)
     defaults.set(fontSize, forKey: Key.fontSize)
     defaults.set(fontName, forKey: Key.fontName)

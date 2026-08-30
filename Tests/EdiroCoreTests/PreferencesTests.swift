@@ -1,9 +1,10 @@
 import Foundation
 import Testing
+import TestSupport
 
 @testable import EdiroCore
 
-private func makeDefaults() -> UserDefaults { TestArtifacts.defaults() }
+private func makeDefaults() -> InMemoryStore { InMemoryStore() }
 
 @Test func 保存した設定を読み戻せる() {
   let defaults = makeDefaults()

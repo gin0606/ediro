@@ -18,6 +18,11 @@ let package = Package(
         .swiftLanguageMode(.v6)
       ]
     ),
+    .target(
+      name: "TestSupport",
+      dependencies: ["EdiroCore"],
+      swiftSettings: [.swiftLanguageMode(.v6)]
+    ),
     .executableTarget(
       name: "Ediro",
       dependencies: ["EdiroUI"],
@@ -28,12 +33,12 @@ let package = Package(
     ),
     .testTarget(
       name: "EdiroCoreTests",
-      dependencies: ["EdiroCore"],
+      dependencies: ["EdiroCore", "TestSupport"],
       swiftSettings: [.swiftLanguageMode(.v6)]
     ),
     .testTarget(
       name: "EdiroUITests",
-      dependencies: ["EdiroUI"],
+      dependencies: ["EdiroUI", "TestSupport"],
       swiftSettings: [
         .defaultIsolation(MainActor.self),
         .swiftLanguageMode(.v6)

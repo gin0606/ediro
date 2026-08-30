@@ -1,6 +1,7 @@
 import EdiroCore
 import Foundation
 import Testing
+import TestSupport
 
 @testable import EdiroUI
 
@@ -10,7 +11,7 @@ private func makeStore() -> DocumentStore {
 
 /// debounce の待ちは実時間なので、並行実行の負荷で揺れないよう詰めておく。
 private func state(on store: DocumentStore) -> AppState {
-  AppState(documentStore: store, defaults: TestArtifacts.defaults(), saveDelay: .zero)
+  AppState(documentStore: store, defaults: InMemoryStore(), saveDelay: .zero)
 }
 
 @Test func 打鍵したあと待つとディスクに書かれる() async throws {
@@ -136,7 +137,7 @@ private func state(on store: DocumentStore) -> AppState {
 @Test func 打鍵の直後には書かず待ってから書く() async throws {
   let store = makeStore()
   let app = AppState(
-    documentStore: store, defaults: TestArtifacts.defaults(), saveDelay: .milliseconds(300))
+    documentStore: store, defaults: InMemoryStore(), saveDelay: .milliseconds(300))
 
   app.text = "待ってから書かれる本文"
   #expect((try? store.load()) != "待ってから書かれる本文", "待たずに書き出している")
@@ -147,7 +148,7 @@ private func state(on store: DocumentStore) -> AppState {
 @Test func 連続した打鍵はひとつの書き込みにまとめる() async throws {
   let store = makeStore()
   let app = AppState(
-    documentStore: store, defaults: TestArtifacts.defaults(), saveDelay: .milliseconds(200))
+    documentStore: store, defaults: InMemoryStore(), saveDelay: .milliseconds(200))
 
   // 打鍵の間隔を待ちより短く取る。まとめられていなければ、打鍵ごとの書き込みが
   // 同じ間隔で並ぶので、途中の本文がディスク上に現れる。

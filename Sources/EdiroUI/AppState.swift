@@ -30,7 +30,7 @@ public final class AppState {
   public private(set) var quarantined: String?
 
   private let documentStore: DocumentStore
-  private let defaults: UserDefaults
+  private let defaults: any KeyValueStore
   /// 打鍵が止まってから書き出すまでの待ち。テストは待たずに済ませるため差し替える。
   private let saveDelay: Duration
   private var saveTask: Task<Void, Never>?
@@ -41,7 +41,7 @@ public final class AppState {
   private var isDirty = false
 
   public init(
-    documentStore: DocumentStore, defaults: UserDefaults = .standard,
+    documentStore: DocumentStore, defaults: any KeyValueStore = UserDefaults.standard,
     saveDelay: Duration = .milliseconds(400)
   ) {
     self.documentStore = documentStore
