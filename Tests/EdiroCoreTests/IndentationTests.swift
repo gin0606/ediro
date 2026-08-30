@@ -28,13 +28,16 @@ private func indent(_ text: String, at location: Int) -> String {
   #expect(indent(text, at: 2) == "")
 }
 
-@Test func 行頭にカーソルがあっても行の空白を返す() {
-  let text = "  インデント行"
-  #expect(indent(text, at: 0) == "  ")
+@Test func カーソルより後ろの空白は引き継がない() {
+  // 行頭で改行したとき、インデントを二重に足さないため
+  #expect(indent("  インデント行", at: 0) == "")
+  // インデントの内側で改行したとき、深さが増えないため
+  #expect(indent("    インデント行", at: 2) == "  ")
+  #expect(indent("    インデント行", at: 4) == "    ")
 }
 
 @Test func 範囲外の位置でも落ちない() {
   #expect(indent("", at: 0) == "")
   #expect(indent("abc", at: 999) == "")
-  #expect(indent("  abc", at: -5) == "  ")
+  #expect(indent("  abc", at: -5) == "")
 }
