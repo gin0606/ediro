@@ -13,10 +13,12 @@ final class MainWindow: NSWindow {
 /// ウィンドウの生成と、SwiftUI 側では表現できない挙動を受け持つ。
 final class MainWindowController: NSObject, NSWindowDelegate {
   private let state: AppState
+  let editor: EditorTextController
   let window: MainWindow
 
   init(state: AppState) {
     self.state = state
+    self.editor = EditorTextController(state: state)
     window = MainWindow(
       contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
       styleMask: WindowMetrics.styleMask,
@@ -28,7 +30,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
     window.isMovableByWindowBackground = false
-    window.contentView = NSHostingView(rootView: RootView(state: state))
+    window.contentView = NSHostingView(rootView: RootView(state: state, editor: editor))
     window.delegate = self
     window.setFrameAutosaveName("MainWindow")
     window.contentMinSize = NSSize(width: 320, height: 200)
@@ -46,11 +48,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
   /// 起動直後からそのまま打ち始められるようにする。
   func focusEditor() {
-    guard let contentView = window.contentView else { return }
-    // NSHostingView はレイアウトを通すまで内側のビューを作らない。
-    contentView.layoutSubtreeIfNeeded()
-    guard let textView = firstTextView(in: contentView) else { return }
-    window.makeFirstResponder(textView)
+    // NSHostingView はレイアウトを通すまで内側のビューを窓に載せない。
+    window.contentView?.layoutSubtreeIfNeeded()
+    window.makeFirstResponder(editor.textView)
   }
 
   /// 閉じるはアプリを隠すだけにする。下書きが常駐している前提の使い方に合わせる。

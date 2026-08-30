@@ -2,11 +2,12 @@ import SwiftUI
 
 struct RootView: View {
   @Bindable var state: AppState
+  let editor: EditorTextController
 
   var body: some View {
     VStack(spacing: 0) {
       TitleBarView(theme: state.theme)
-      EditorTextView(state: state)
+      EditorTextView(controller: editor)
       NavBarView(state: state)
     }
     .overlay(alignment: .center) {
