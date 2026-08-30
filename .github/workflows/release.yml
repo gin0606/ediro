@@ -12,7 +12,13 @@ jobs:
   release:
     # ビルドに macOS 26 SDK と Swift 6.2 が要る。
     runs-on: macos-26
-    timeout-minutes: 30
+    # 公証の待ち (Makefile の notarytool --timeout) を丸ごと収める。
+    timeout-minutes: 45
+
+    env:
+      # keychain には import した 1 枚しか入らないので、codesign が識別名を
+      # 解決するには種別だけで足りる。
+      SIGN_IDENTITY: "Developer ID Application"
 
     defaults:
       run:
@@ -44,12 +50,51 @@ jobs:
       - name: Test
         run: swift test
 
-      - name: Build the distribution zip
+      # 鍵は runner 限りの keychain に置く。後始末は runner の破棄に任せる。
+      - name: Import the signing certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -base64 24)"
+          p12="$RUNNER_TEMP/certificate.p12"
+          # 途中で落ちても復号した鍵を残さない。
+          trap 'rm -f "$p12"' EXIT
+          (umask 077; printf '%s' "$CERT_P12_BASE64" | base64 --decode > "$p12")
+          security create-keychain -p "$keychain_password" "$keychain"
+          # 既定では数分で自動ロックされ、その後の codesign が鍵を引けなくなる。
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          # codesign が確認を求めずに鍵を使えるようにする。
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+          # 取り違えた secret でも import 自体は通る。1 枚に定まらなければ
+          # codesign が識別名を解決できないので、署名に入る前に弾く。
+          found="$(security find-identity -v -p codesigning "$keychain" |
+            grep -cF "$SIGN_IDENTITY" || true)"
+          if [ "$found" != "1" ]; then
+            echo "$SIGN_IDENTITY の鍵が $found 枚あります (1 枚であるべき)" >&2
+            exit 1
+          fi
+
+      - name: Build and notarize the distribution zip
         id: dist
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
-          make dist VERSION="$VERSION"
+          NOTARY_KEY="$RUNNER_TEMP/notary.p8"
+          export NOTARY_KEY
+          trap 'rm -f "$NOTARY_KEY"' EXIT
+          # umask は復号だけに掛ける。step 全体に効かせると、この後 make が作る
+          # .app のパーミッションまで 700/600 に落ち、それが zip に載る。
+          (umask 077; printf '%s' "$NOTARY_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY")
+          make notarize VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY"
           echo "path=$(make -s dist-path VERSION="$VERSION")" >> "$GITHUB_OUTPUT"
 
       # リリースの公開は取り消せないので、secrets と tap の実在は公開より前に確かめる。

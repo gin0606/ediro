@@ -15,6 +15,18 @@ endif
 ## dist は VARIANT=dev の文脈から release のバンドルを指すので、名前をここで持つ。
 RELEASE_EXEC := Ediro
 
+## 配布物は Developer ID で署名して公証する。手元には鍵がないので、識別名が
+## 渡されなければ ad-hoc 署名に落とす。VERSION と同じ理由で環境変数は見ない。
+ifneq ($(origin SIGN_IDENTITY), command line)
+  SIGN_IDENTITY := -
+endif
+ifeq ($(SIGN_IDENTITY),-)
+  CODESIGN_OPTIONS :=
+else
+  ## 公証は hardened runtime と署名時刻の両方を要求する。
+  CODESIGN_OPTIONS := --options runtime --timestamp
+endif
+
 ## 既定は開発用ビルド。日常的に使うビルドは `make release` で作る。
 ## 名前と bundle identifier が違うため、設定 (UserDefaults) と下書きの保存先も
 ## 別になる。開発中の操作が実際の下書きに触れない。
@@ -35,7 +47,7 @@ DIST := .build/$(RELEASE_EXEC)-$(VERSION).zip
 ICONSET := .build/$(EXEC).iconset
 ICNS := .build/$(EXEC).icns
 
-.PHONY: build test app run relaunch stop shot icon release dist dist-path clean
+.PHONY: build test app run relaunch stop shot icon release dist dist-path check-notary notarize clean
 
 build:
 	swift build -c $(CONFIG)
@@ -69,7 +81,7 @@ app: build $(ICNS)
 	sed -e 's/@NAME@/$(NAME)/g' -e 's/@EXEC@/$(EXEC)/g' -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g' \
 		-e 's/@VERSION@/$(VERSION)/g' \
 		Support/Info.plist.in > $(BUNDLE)/Contents/Info.plist
-	codesign --force --sign - $(BUNDLE)
+	codesign --force $(CODESIGN_OPTIONS) --sign "$(SIGN_IDENTITY)" $(BUNDLE)
 	@echo "built $(BUNDLE) ($$(du -sh $(BUNDLE) | cut -f1))"
 
 ## 日常使いのビルドを手元で作る。/Applications へ入れるのは Homebrew 経由。
@@ -79,6 +91,31 @@ release:
 dist: release
 	@rm -f $(DIST)
 	ditto -c -k --keepParent $(RELEASE_BUNDLE) $(DIST)
+	@shasum -a 256 $(DIST)
+
+## 前提はビルドより先に見る。zip まで作ってから鍵の不足で落ちると無駄が大きい。
+## 空の secret を復号しても 0 バイトのファイルが残るので、鍵は中身の有無まで見る。
+check-notary:
+	@test -n "$(SIGN_IDENTITY)" && test "$(SIGN_IDENTITY)" != "-" || \
+		{ echo "公証には Developer ID の署名が要ります (SIGN_IDENTITY)" >&2; exit 1; }
+	@test -s "$$NOTARY_KEY" || \
+		{ echo "NOTARY_KEY が指す鍵ファイルが空か存在しません" >&2; exit 1; }
+	@test -n "$$NOTARY_KEY_ID" && test -n "$$NOTARY_ISSUER_ID" || \
+		{ echo "NOTARY_KEY_ID / NOTARY_ISSUER_ID を環境変数で渡してください" >&2; exit 1; }
+
+## staple 前の zip を配ると、Gatekeeper が初回起動時に Apple へ問い合わせに行く。
+## 公開は取り消せないので、綴じた後に配布物を検分する。spctl はチケットが無くても
+## オンラインの照会で通すため、綴じられたことは stapler validate の側で見る。
+notarize: check-notary dist
+	xcrun notarytool submit $(DIST) --key "$$NOTARY_KEY" --key-id "$$NOTARY_KEY_ID" \
+		--issuer "$$NOTARY_ISSUER_ID" --wait --timeout 30m
+	xcrun stapler staple $(RELEASE_BUNDLE)
+	@rm -f $(DIST)
+	ditto -c -k --keepParent $(RELEASE_BUNDLE) $(DIST)
+	codesign --verify --strict --verbose=2 $(RELEASE_BUNDLE)
+	xcrun stapler validate $(RELEASE_BUNDLE)
+	spctl -a -vv -t exec $(RELEASE_BUNDLE)
+	@echo "staple 済みの配布物:"
 	@shasum -a 256 $(DIST)
 
 run: app
