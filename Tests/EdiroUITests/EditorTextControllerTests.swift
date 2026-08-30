@@ -58,6 +58,49 @@ private func bodyFontSize(_ controller: EditorTextController) -> Double? {
   #expect(state.metrics.characters == 5)
 }
 
+@Test func 打鍵の直後にはハイライトを掛け直さない() {
+  let state = makeState(text: "普通の本文")
+  let controller = EditorTextController(state: state, highlightDelay: .seconds(10))
+  let storage = controller.textView.textStorage!
+
+  controller.textView.insertText("# ", replacementRange: NSRange(location: 0, length: 0))
+  let font = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+  #expect(
+    font.map { Double($0.pointSize) } == Preferences.default.fontSize,
+    "打鍵と同時に全文を敷き直している")
+}
+
+@Test func 打鍵が止まるとハイライトが掛かる() async {
+  let state = makeState(text: "普通の本文")
+  let controller = EditorTextController(state: state, highlightDelay: .milliseconds(10))
+  let storage = controller.textView.textStorage!
+
+  controller.textView.insertText("# ", replacementRange: NSRange(location: 0, length: 0))
+  #expect(
+    await waitUntil(
+      {
+        let font = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        return font.map { Double($0.pointSize) } ?? 0 > Preferences.default.fontSize
+      }, timeout: .seconds(2)), "待っても見出しが大きくならない")
+}
+
+@Test func 変換中はハイライトを掛け直さない() {
+  let state = makeState(text: "本文")
+  let controller = EditorTextController(state: state, highlightDelay: .zero)
+  let textView = controller.textView
+  textView.setSelectedRange(NSRange(location: 0, length: 0))
+  textView.setMarkedText(
+    "へんかん", selectedRange: NSRange(location: 4, length: 0),
+    replacementRange: NSRange(location: 0, length: 0))
+  try? #require(textView.hasMarkedText())
+
+  // 変換中に敷き直すと、AppKit が marked text に付けた属性を消してしまう
+  let before = textView.textStorage!.attributes(at: 0, effectiveRange: nil)
+  controller.highlight()
+  let after = textView.textStorage!.attributes(at: 0, effectiveRange: nil)
+  #expect(before.keys.map(\.rawValue).sorted() == after.keys.map(\.rawValue).sorted())
+}
+
 @Test func コピーは書式なしテキストだけをクリップボードに載せる() {
   let state = makeState(text: "**太字**と# 見出し")
   let controller = EditorTextController(state: state)
@@ -97,6 +140,27 @@ private func insertNewline(_ controller: EditorTextController) {
   // 既定の改行に委ねるので、この呼び出しでは文字列が変わらない
   insertNewline(controller)
   #expect(controller.textView.string == "ふつうの行")
+}
+
+@Test func 行頭で改行してもインデントは深くならない() {
+  let state = makeState()
+  let controller = EditorTextController(state: state)
+  controller.textView.string = "    インデント行"
+  controller.textView.setSelectedRange(NSRange(location: 0, length: 0))
+
+  // 既定の改行に委ねる。自前で足すと、空行に空白が残ったうえ深さが倍になる
+  insertNewline(controller)
+  #expect(controller.textView.string == "    インデント行")
+}
+
+@Test func インデントの内側で改行しても深さを保つ() {
+  let state = makeState()
+  let controller = EditorTextController(state: state)
+  controller.textView.string = "    インデント行"
+  controller.textView.setSelectedRange(NSRange(location: 2, length: 0))
+
+  insertNewline(controller)
+  #expect(controller.textView.string == "  \n    インデント行")
 }
 
 @Test func 行の途中で改行しても深さを保つ() {

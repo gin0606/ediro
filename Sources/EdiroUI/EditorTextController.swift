@@ -10,10 +10,17 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
   private var theme: Theme
   private var preferences: Preferences
 
-  public init(state: AppState) {
+  /// ハイライトを掛け直すまでの待ち。打鍵のたびに全文へ属性を敷き直すと
+  /// 入力が引っかかるので、打鍵が止まってからまとめて掛ける。
+  /// テストは待たずに済ませるため差し替える。
+  private let highlightDelay: Duration
+  private var highlightTask: Task<Void, Never>?
+
+  public init(state: AppState, highlightDelay: Duration = .milliseconds(80)) {
     self.state = state
     self.theme = state.theme
     self.preferences = state.preferences
+    self.highlightDelay = highlightDelay
 
     scrollView = NSTextView.scrollableTextView()
     guard let textView = scrollView.documentView as? NSTextView else {
@@ -38,10 +45,10 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
     textView.delegate = self
     textView.textStorage?.delegate = self
 
-    // textStorage の delegate はこの代入で didProcessEditing を呼ぶため、
-    // ハイライトはここで一度掛かる。明示的に掛け直すと全文を二度走査する。
     textView.string = state.text
     applyAppearance()
+    // 初回だけは待たずに掛ける。最初の描画が素の本文になるのを避ける。
+    highlight()
     observeState()
   }
 
@@ -93,8 +100,24 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
     textView.typingAttributes[.foregroundColor] = theme.editorForeground.nsColor
   }
 
+  /// 打鍵が止まってからハイライトを掛け直す。
+  private func scheduleHighlight() {
+    highlightTask?.cancel()
+    let delay = highlightDelay
+    highlightTask = Task { [weak self] in
+      try? await Task.sleep(for: delay)
+      guard !Task.isCancelled, let self else { return }
+      self.highlight()
+    }
+  }
+
+  /// ハイライトを今すぐ掛け直す。予約済みの掛け直しがあれば取り消す。
   public func highlight() {
+    highlightTask?.cancel()
     guard let storage = textView.textStorage else { return }
+    // 変換中は敷き直さない。marked text に付いた下線や節の区切りを消してしまう。
+    // 確定すると本文が変わり、didProcessEditing から掛け直しが予約される。
+    guard !textView.hasMarkedText() else { return }
     MarkdownAttributer(theme: theme, preferences: preferences).apply(to: storage)
   }
 
@@ -116,12 +139,11 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
     return true
   }
 
-  /// 属性の付け直しは編集処理が終わったこの時点で行う。
   public func textStorage(
     _ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
     range editedRange: NSRange, changeInLength delta: Int
   ) {
     guard editedMask.contains(.editedCharacters) else { return }
-    MarkdownAttributer(theme: theme, preferences: preferences).apply(to: textStorage)
+    scheduleHighlight()
   }
 }
