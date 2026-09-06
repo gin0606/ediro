@@ -7,6 +7,7 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
   public let textView: NSTextView
 
   private let state: AppState
+  private var synchronizedText: String
   private var theme: Theme
   private var preferences: Preferences
 
@@ -18,6 +19,7 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
 
   public init(state: AppState, highlightDelay: Duration = .milliseconds(80)) {
     self.state = state
+    self.synchronizedText = state.text
     self.theme = state.theme
     self.preferences = state.preferences
     self.highlightDelay = highlightDelay
@@ -70,11 +72,15 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
   /// 外側から本文が差し替わったときだけ書き戻す。入力のたびに代入すると
   /// カーソル位置と変換中の文字が飛ぶ。
   public func syncFromState() {
-    if textView.string != state.text {
-      let selected = textView.selectedRange()
-      textView.string = state.text
-      textView.setSelectedRange(
-        NSRange(location: min(selected.location, (state.text as NSString).length), length: 0))
+    // 未確定文字は state にまだ入っていない。画面との差分だけでは外部変更と区別できない。
+    if synchronizedText != state.text {
+      synchronizedText = state.text
+      if textView.string != state.text {
+        let selected = textView.selectedRange()
+        textView.string = state.text
+        textView.setSelectedRange(
+          NSRange(location: min(selected.location, (state.text as NSString).length), length: 0))
+      }
     }
 
     // 打鍵のたびにも呼ばれる。見た目に関わる値が動いていなければ、外観の
@@ -122,7 +128,8 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
   }
 
   public func textDidChange(_ notification: Notification) {
-    state.text = textView.string
+    synchronizedText = textView.string
+    state.text = synchronizedText
   }
 
   /// 改行したときに前の行と同じ深さから書き始められるようにする。
@@ -130,6 +137,7 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
   /// 変換に手を加えない。
   public func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
     guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+    guard !textView.hasMarkedText() else { return false }
 
     let indent = Indentation.leadingWhitespace(
       in: textView.string, at: textView.selectedRange().location)

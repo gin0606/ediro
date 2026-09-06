@@ -183,3 +183,60 @@ private func insertNewline(_ controller: EditorTextController) {
   }
   #expect(width(tabSize: 8) > width(tabSize: 2))
 }
+
+@Test func 変換確定直後の同期で次の未確定文字を消さない() throws {
+  let state = makeState()
+  let controller = EditorTextController(state: state)
+  let textView = controller.textView
+  let currentInput = NSRange(location: NSNotFound, length: 0)
+  textView.setMarkedText(
+    "にゅうりょく", selectedRange: NSRange(location: 6, length: 0),
+    replacementRange: currentInput)
+  textView.setMarkedText(
+    "入力", selectedRange: NSRange(location: 2, length: 0), replacementRange: currentInput)
+  textView.insertText("入力", replacementRange: currentInput)
+  #expect(state.text == "入力")
+
+  textView.setMarkedText(
+    "。", selectedRange: NSRange(location: 1, length: 0), replacementRange: currentInput)
+  try #require(textView.hasMarkedText())
+  let marked = textView.markedRange()
+  let selected = textView.selectedRange()
+
+  controller.syncFromState()
+
+  #expect(textView.string == "入力。")
+  #expect(textView.markedRange() == marked)
+  #expect(textView.selectedRange() == selected)
+  textView.insertText("。", replacementRange: currentInput)
+  #expect(state.text == "入力。")
+}
+
+@Test func 最初の未確定文字も同期で消さない() {
+  let controller = EditorTextController(state: makeState())
+  let textView = controller.textView
+  textView.setMarkedText(
+    "にほんご", selectedRange: NSRange(location: 4, length: 0),
+    replacementRange: NSRange(location: NSNotFound, length: 0))
+
+  controller.syncFromState()
+
+  #expect(textView.string == "にほんご")
+  #expect(textView.hasMarkedText())
+}
+
+@Test func 変換中の改行命令には自動インデントを適用しない() {
+  let controller = EditorTextController(state: makeState(text: "  "))
+  let textView = controller.textView
+  textView.setSelectedRange(NSRange(location: 2, length: 0))
+  textView.setMarkedText(
+    "入力", selectedRange: NSRange(location: 2, length: 0),
+    replacementRange: NSRange(location: NSNotFound, length: 0))
+
+  let handled = controller.textView(
+    textView, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+
+  #expect(!handled)
+  #expect(textView.string == "  入力")
+  #expect(textView.hasMarkedText())
+}
