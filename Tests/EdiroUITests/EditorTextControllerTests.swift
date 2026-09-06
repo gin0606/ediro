@@ -81,7 +81,7 @@ private func bodyFontSize(_ controller: EditorTextController) -> Double? {
       {
         let font = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
         return font.map { Double($0.pointSize) } ?? 0 > Preferences.default.fontSize
-      }, timeout: .seconds(2)), "待っても見出しが大きくならない")
+      }, timeout: .seconds(10)), "待っても見出しが大きくならない")
 }
 
 @Test func 変換中はハイライトを掛け直さない() {

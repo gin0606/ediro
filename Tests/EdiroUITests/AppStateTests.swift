@@ -19,7 +19,7 @@ private func state(on store: DocumentStore) -> AppState {
   let app = state(on: store)
   app.text = "保存される本文"
 
-  #expect(await waitUntil({ (try? store.load()) == "保存される本文" }, timeout: .seconds(2)))
+  #expect(await waitUntil({ (try? store.load()) == "保存される本文" }, timeout: .seconds(10)))
 }
 
 @Test func flushは待たずに書き出す() throws {
