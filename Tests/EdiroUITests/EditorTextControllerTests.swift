@@ -6,6 +6,45 @@ import Testing
 
 extension AppKitTests {
   struct EditorTextControllerTests {
+    @Test func 長文の下部を編集しても後続行の表示と選択位置を保つ() async throws {
+      let prefix = String(repeating: "# Heading\n本文と**太字**です。\n", count: 500)
+      let state = makeState(text: prefix + "編集する本文\n後続の本文\n最後の行")
+      let controller = EditorTextController(state: state, highlightDelay: .seconds(10))
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+        styleMask: [.titled], backing: .buffered, defer: false)
+      window.contentView = controller.scrollView
+      defer { window.orderOut(nil) }
+      let textView = controller.textView
+      window.makeFirstResponder(textView)
+      window.displayIfNeeded()
+      let location = (prefix as NSString).length
+      textView.setSelectedRange(NSRange(location: location, length: 0))
+      textView.scrollRangeToVisible(textView.selectedRange())
+      await Task.yield()
+      window.displayIfNeeded()
+      try #require(controller.scrollView.contentView.bounds.minY > 0)
+
+      for input in ["追記", "\n", "# "] {
+        textView.insertText(input, replacementRange: textView.selectedRange())
+        let selected = textView.selectedRange()
+        let scrollOrigin = controller.scrollView.contentView.bounds.origin
+        controller.highlight()
+        await Task.yield()
+        window.displayIfNeeded()
+
+        #expect(textView.selectedRange() == selected)
+        #expect(abs(controller.scrollView.contentView.bounds.minY - scrollOrigin.y) < 40)
+        #expect(state.text == textView.string)
+        let following = (textView.string as NSString).range(of: "後続の本文")
+        let screenRect = textView.firstRect(forCharacterRange: following, actualRange: nil)
+        let rect = textView.convert(window.convertFromScreen(screenRect), from: nil)
+        #expect(rect.height > 0)
+        #expect(rect.intersects(textView.visibleRect))
+      }
+      #expect(textView.string == prefix + "追記\n# 編集する本文\n後続の本文\n最後の行")
+    }
+
     private func bodyFontSize(_ controller: EditorTextController) -> Double? {
       let font = controller.textView.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
       return font.map { Double($0.pointSize) }

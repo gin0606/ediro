@@ -22,7 +22,8 @@ public struct MarkdownAttributer {
     let full = NSRange(location: 0, length: (text as NSString).length)
     let palette = SyntaxPalette(theme: theme)
 
-    storage.setAttributes(
+    let styled = NSMutableAttributedString(string: text)
+    styled.setAttributes(
       [
         .font: resolver.bodyFont,
         .foregroundColor: theme.editorForeground.nsColor,
@@ -40,7 +41,26 @@ public struct MarkdownAttributer {
         attributes[.strokeWidth] = Self.syntheticBoldStroke
         attributes[.strokeColor] = style.color.nsColor
       }
-      storage.addAttributes(attributes, range: token.range)
+      styled.addAttributes(attributes, range: token.range)
     }
+    // NSTextStorage と同じフォントのフォールバック・段落属性に揃えて比較する。
+    styled.fixAttributes(in: full)
+
+    // 全文の属性を消してから付け直すと、画面外も含むレイアウトが繰り返し
+    // 無効になる。完成した書式と比較し、差分だけを一度に通知する。
+    var changes: [(NSRange, [NSAttributedString.Key: Any])] = []
+    styled.enumerateAttributes(in: full) { attributes, range, _ in
+      storage.enumerateAttributes(in: range) { current, currentRange, _ in
+        if !NSDictionary(dictionary: current).isEqual(to: attributes) {
+          changes.append((currentRange, attributes))
+        }
+      }
+    }
+    guard !changes.isEmpty else { return }
+    storage.beginEditing()
+    for (range, attributes) in changes {
+      storage.setAttributes(attributes, range: range)
+    }
+    storage.endEditing()
   }
 }
