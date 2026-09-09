@@ -17,12 +17,19 @@ extension AppKitTests {
       defer { window.orderOut(nil) }
       let textView = controller.textView
       window.makeFirstResponder(textView)
+      window.orderFront(nil)
       window.displayIfNeeded()
       let location = (prefix as NSString).length
       textView.setSelectedRange(NSRange(location: location, length: 0))
       textView.scrollRangeToVisible(textView.selectedRange())
-      await Task.yield()
-      window.displayIfNeeded()
+      func followingLineIsVisible() -> Bool {
+        window.displayIfNeeded()
+        let following = (textView.string as NSString).range(of: "後続の本文")
+        let screenRect = textView.firstRect(forCharacterRange: following, actualRange: nil)
+        let rect = textView.convert(window.convertFromScreen(screenRect), from: nil)
+        return rect.height > 0 && rect.intersects(textView.visibleRect)
+      }
+      #expect(await waitUntil({ followingLineIsVisible() }, timeout: .seconds(2)))
       try #require(controller.scrollView.contentView.bounds.minY > 0)
 
       for input in ["追記", "\n", "# "] {
@@ -30,17 +37,11 @@ extension AppKitTests {
         let selected = textView.selectedRange()
         let scrollOrigin = controller.scrollView.contentView.bounds.origin
         controller.highlight()
-        await Task.yield()
-        window.displayIfNeeded()
+        #expect(await waitUntil({ followingLineIsVisible() }, timeout: .seconds(2)))
 
         #expect(textView.selectedRange() == selected)
         #expect(abs(controller.scrollView.contentView.bounds.minY - scrollOrigin.y) < 40)
         #expect(state.text == textView.string)
-        let following = (textView.string as NSString).range(of: "後続の本文")
-        let screenRect = textView.firstRect(forCharacterRange: following, actualRange: nil)
-        let rect = textView.convert(window.convertFromScreen(screenRect), from: nil)
-        #expect(rect.height > 0)
-        #expect(rect.intersects(textView.visibleRect))
       }
       #expect(textView.string == prefix + "追記\n# 編集する本文\n後続の本文\n最後の行")
     }

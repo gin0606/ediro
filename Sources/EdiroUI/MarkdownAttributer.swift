@@ -22,7 +22,8 @@ public struct MarkdownAttributer {
     let full = NSRange(location: 0, length: (text as NSString).length)
     let palette = SyntaxPalette(theme: theme)
 
-    let styled = NSMutableAttributedString(string: text)
+    let styled = NSTextStorage(string: text)
+    styled.beginEditing()
     styled.setAttributes(
       [
         .font: resolver.bodyFont,
@@ -43,8 +44,9 @@ public struct MarkdownAttributer {
       }
       styled.addAttributes(attributes, range: token.range)
     }
-    // NSTextStorage と同じフォントのフォールバック・段落属性に揃えて比較する。
-    styled.fixAttributes(in: full)
+    styled.endEditing()
+    // フォントのフォールバック・段落属性の遅延補正を済ませてから比較する。
+    styled.ensureAttributesAreFixed(in: full)
 
     // 全文の属性を消してから付け直すと、画面外も含むレイアウトが繰り返し
     // 無効になる。完成した書式と比較し、差分だけを一度に通知する。
