@@ -23,10 +23,11 @@ extension AppKitTests {
       attributer.apply(to: storage)
       let recorder = EditRecorder()
       storage.delegate = recorder
+      let before = NSAttributedString(attributedString: storage)
 
       attributer.apply(to: storage)
 
-      #expect(recorder.ranges.isEmpty)
+      #expect(recorder.ranges.isEmpty, "before: \(before)\nafter: \(storage)")
     }
 
     @Test func 長文の下部の書式変更で上部を無効にしない() {
