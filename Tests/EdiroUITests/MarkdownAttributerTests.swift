@@ -27,7 +27,11 @@ extension AppKitTests {
 
       attributer.apply(to: storage)
 
-      #expect(recorder.ranges.isEmpty, "before: \(before)\nafter: \(storage)")
+      let beforeFont = before.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
+      let afterFont = storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
+      #expect(
+        recorder.ranges.isEmpty,
+        "before: \(beforeFont?.fontDescriptor.fontAttributes ?? [:])\nafter: \(afterFont?.fontDescriptor.fontAttributes ?? [:])")
     }
 
     @Test func 長文の下部の書式変更で上部を無効にしない() {

@@ -53,7 +53,7 @@ public struct MarkdownAttributer {
     var changes: [(NSRange, [NSAttributedString.Key: Any])] = []
     styled.enumerateAttributes(in: full) { attributes, range, _ in
       storage.enumerateAttributes(in: range) { current, currentRange, _ in
-        if !NSDictionary(dictionary: current).isEqual(to: attributes) {
+        if !Self.equalAttributes(current, attributes) {
           changes.append((currentRange, attributes))
         }
       }
@@ -64,5 +64,19 @@ public struct MarkdownAttributer {
       storage.setAttributes(attributes, range: range)
     }
     storage.endEditing()
+  }
+
+  private static func equalAttributes(
+    _ left: [NSAttributedString.Key: Any], _ right: [NSAttributedString.Key: Any]
+  ) -> Bool {
+    if NSDictionary(dictionary: left).isEqual(to: right) { return true }
+    guard let leftFont = left[.font] as? NSFont, let rightFont = right[.font] as? NSFont,
+      leftFont.pointSize == rightFont.pointSize,
+      leftFont.fontDescriptor == rightFont.fontDescriptor
+    else { return false }
+    // フォールバックで別インスタンスになった同じ書体も、書式の変更とは扱わない。
+    var comparable = left
+    comparable[.font] = rightFont
+    return NSDictionary(dictionary: comparable).isEqual(to: right)
   }
 }
