@@ -72,7 +72,8 @@ public struct MarkdownAttributer {
     if NSDictionary(dictionary: left).isEqual(to: right) { return true }
     guard let leftFont = left[.font] as? NSFont, let rightFont = right[.font] as? NSFont,
       leftFont.pointSize == rightFont.pointSize,
-      leftFont.fontDescriptor == rightFont.fontDescriptor
+      NSDictionary(dictionary: leftFont.fontDescriptor.fontAttributes)
+        .isEqual(to: rightFont.fontDescriptor.fontAttributes)
     else { return false }
     // フォールバックで別インスタンスになった同じ書体も、書式の変更とは扱わない。
     var comparable = left
