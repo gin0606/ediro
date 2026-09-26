@@ -71,8 +71,7 @@ public struct FontResolver {
   /// 変わらないが、和文と欧文が隣接する箇所の詰めだけはわずかに動く。
   /// NSAttributedString の .obliqueness は TextKit 2 の NSTextView では無視される。
   private static func slanted(_ font: NSFont, size: Double) -> NSFont {
-    var matrix = AffineTransform(scale: size)
-    matrix.append(AffineTransform(m11: 1, m12: 0, m21: slant, m22: 1, tX: 0, tY: 0))
+    let matrix = AffineTransform(m11: 1, m12: 0, m21: slant, m22: 1, tX: 0, tY: 0)
     return NSFont(descriptor: font.fontDescriptor.withMatrix(matrix), size: size) ?? font
   }
 }

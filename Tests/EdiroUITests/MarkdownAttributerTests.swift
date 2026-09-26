@@ -84,6 +84,14 @@ extension AppKitTests {
       #expect(heading.pointSize > body.pointSize)
     }
 
+    @Test func 引用の文字サイズは本文と同じ() throws {
+      let text = "> 引用文\n本文"
+      let quote = try attributedFont(text, at: "引用文")
+      let body = try attributedFont(text, at: "本文")
+      #expect(quote.pointSize == body.pointSize,
+        "quote: \(quote.pointSize), body: \(body.pointSize)")
+    }
+
     @Test func 装飾のない本文は既定の前景色になる() throws {
       let color = try attributedColor("ただの本文です", at: "ただの")
       let expected = Theme.fallback.editorForeground.nsColor
