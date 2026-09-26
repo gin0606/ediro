@@ -72,6 +72,14 @@ public struct FontResolver {
   /// NSAttributedString の .obliqueness は TextKit 2 の NSTextView では無視される。
   private static func slanted(_ font: NSFont, size: Double) -> NSFont {
     let matrix = AffineTransform(m11: 1, m12: 0, m21: slant, m22: 1, tX: 0, tY: 0)
-    return NSFont(descriptor: font.fontDescriptor.withMatrix(matrix), size: size) ?? font
+    guard let resolved = NSFont(descriptor: font.fontDescriptor.withMatrix(matrix), size: size)
+    else { return font }
+    guard resolved.pointSize > 0, abs(resolved.pointSize - size) > 0.01 else { return resolved }
+
+    // macOS 26 は行列の倍率をそのまま pointSize に使い、macOS 27 は size 引数も掛ける。
+    let correction = size / resolved.pointSize
+    let corrected = AffineTransform(
+      m11: correction, m12: 0, m21: slant * correction, m22: correction, tX: 0, tY: 0)
+    return NSFont(descriptor: font.fontDescriptor.withMatrix(corrected), size: size) ?? font
   }
 }
