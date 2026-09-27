@@ -11,18 +11,27 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
   private var theme: Theme
   private var preferences: Preferences
 
-  /// ハイライトを掛け直すまでの待ち。打鍵のたびに全文へ属性を敷き直すと
-  /// 入力が引っかかるので、打鍵が止まってからまとめて掛ける。
-  /// テストは待たずに済ませるため差し替える。
-  private let highlightDelay: Duration
-  private var highlightTask: Task<Void, Never>?
+  private let enqueueHighlight: (@escaping @MainActor () -> Void) -> Void
+  private var scheduledHighlight: UUID?
+  private var typingContext:
+    (
+      text: String, range: NSRange, attributes: [NSAttributedString.Key: Any]
+    )?
 
-  public init(state: AppState, highlightDelay: Duration = .milliseconds(80)) {
+  public convenience init(state: AppState) {
+    self.init(
+      state: state,
+      enqueueHighlight: { update in
+        Task { @MainActor in update() }
+      })
+  }
+
+  init(state: AppState, enqueueHighlight: @escaping (@escaping @MainActor () -> Void) -> Void) {
     self.state = state
     self.synchronizedText = state.text
     self.theme = state.theme
     self.preferences = state.preferences
-    self.highlightDelay = highlightDelay
+    self.enqueueHighlight = enqueueHighlight
 
     scrollView = NSTextView.scrollableTextView()
     guard let textView = scrollView.documentView as? NSTextView else {
@@ -93,6 +102,7 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
   }
 
   private func applyAppearance() {
+    typingContext = nil
     let paragraphStyle = ParagraphStyle.make(for: preferences)
     textView.backgroundColor = theme.editorBackground.nsColor
     textView.insertionPointColor = theme.editorForeground.nsColor
@@ -101,35 +111,63 @@ public final class EditorTextController: NSObject, NSTextViewDelegate, NSTextSto
     // textView.font へ代入すると本文全体のフォントが一律に塗り替えられ、
     // トークンごとに付けた見出しサイズや太字が消える。
     // 入力中の書体は typingAttributes 側に設定する。
-    textView.typingAttributes[.font] = FontResolver(preferences: preferences).bodyFont
-    textView.typingAttributes[.paragraphStyle] = paragraphStyle
-    textView.typingAttributes[.foregroundColor] = theme.editorForeground.nsColor
+    updateTypingAttributes()
   }
 
-  /// 打鍵が止まってからハイライトを掛け直す。
+  private func updateTypingAttributes(replacing range: NSRange? = nil) {
+    guard !textView.hasMarkedText() else { return }
+    let text = textView.string
+    let selection = range ?? textView.selectedRange()
+    // AppKit は同じ編集に対して複数の delegate 通知を送る。
+    // 本文・選択・外観が変わらなければ、構文解析の結果を再利用する。
+    if typingContext?.text != text || typingContext?.range != selection {
+      let attributes = MarkdownAttributer(theme: theme, preferences: preferences)
+        .typingAttributes(in: text, replacing: selection)
+      typingContext = (text, selection, attributes)
+    }
+    if let typingContext { textView.typingAttributes = typingContext.attributes }
+  }
+
+  // 文字編集の通知中には属性を変更しない。実行待ちの要求だけをまとめ、
+  // 後続の打鍵で実行を先延ばしにしない。
   private func scheduleHighlight() {
-    highlightTask?.cancel()
-    let delay = highlightDelay
-    highlightTask = Task { [weak self] in
-      try? await Task.sleep(for: delay)
-      guard !Task.isCancelled, let self else { return }
+    guard scheduledHighlight == nil else { return }
+    let request = UUID()
+    scheduledHighlight = request
+    enqueueHighlight { [weak self] in
+      guard let self, self.scheduledHighlight == request else { return }
       self.highlight()
     }
   }
 
   /// ハイライトを今すぐ掛け直す。予約済みの掛け直しがあれば取り消す。
   public func highlight() {
-    highlightTask?.cancel()
+    scheduledHighlight = nil
     guard let storage = textView.textStorage else { return }
     // 変換中は敷き直さない。marked text に付いた下線や節の区切りを消してしまう。
     // 確定すると本文が変わり、didProcessEditing から掛け直しが予約される。
     guard !textView.hasMarkedText() else { return }
     MarkdownAttributer(theme: theme, preferences: preferences).apply(to: storage)
+    updateTypingAttributes()
   }
 
   public func textDidChange(_ notification: Notification) {
     synchronizedText = textView.string
     state.text = synchronizedText
+    updateTypingAttributes()
+    scheduleHighlight()
+  }
+
+  public func textViewDidChangeSelection(_ notification: Notification) {
+    updateTypingAttributes()
+  }
+
+  public func textView(
+    _ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange,
+    replacementString: String?
+  ) -> Bool {
+    updateTypingAttributes(replacing: affectedCharRange)
+    return true
   }
 
   /// 改行したときに前の行と同じ深さから書き始められるようにする。

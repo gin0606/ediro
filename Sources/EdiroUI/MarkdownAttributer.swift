@@ -17,32 +17,55 @@ public struct MarkdownAttributer {
     self.resolver = FontResolver(preferences: preferences)
   }
 
+  private var bodyAttributes: [NSAttributedString.Key: Any] {
+    [
+      .font: resolver.bodyFont,
+      .foregroundColor: theme.editorForeground.nsColor,
+      .paragraphStyle: ParagraphStyle.make(for: preferences),
+    ]
+  }
+
+  private func attributes(for kind: Token.Kind) -> [NSAttributedString.Key: Any] {
+    let style = SyntaxPalette(theme: theme).style(for: kind)
+    let resolved = resolver.resolve(for: style)
+    var attributes: [NSAttributedString.Key: Any] = [
+      .font: resolved.font, .foregroundColor: style.color.nsColor,
+    ]
+    if resolved.needsSyntheticBold {
+      // 負の値は塗りと縁の両方を描く。縁の色を前景と揃えて太さだけを足す。
+      attributes[.strokeWidth] = Self.syntheticBoldStroke
+      attributes[.strokeColor] = style.color.nsColor
+    }
+    return attributes
+  }
+
+  func typingAttributes(in text: String, replacing range: NSRange) -> [NSAttributedString.Key: Any]
+  {
+    let source = text as NSString
+    guard range.location != NSNotFound, range.location <= source.length,
+      range.length <= source.length - range.location
+    else { return bodyAttributes }
+    // 選択範囲を通常文字で置換して判定する。閉じ記号の外側や構文記号を
+    // 含む選択では、直前の文字の装飾をそのまま引き継がない。
+    let candidate = source.replacingCharacters(in: range, with: "a")
+    guard
+      let token = highlighter.tokens(in: candidate).first(where: {
+        NSLocationInRange(range.location, $0.range)
+      })
+    else { return bodyAttributes }
+    return bodyAttributes.merging(attributes(for: token.kind)) { _, style in style }
+  }
+
   public func apply(to storage: NSTextStorage) {
     let text = storage.string
     let full = NSRange(location: 0, length: (text as NSString).length)
-    let palette = SyntaxPalette(theme: theme)
 
     let styled = NSTextStorage(string: text)
     styled.beginEditing()
-    styled.setAttributes(
-      [
-        .font: resolver.bodyFont,
-        .foregroundColor: theme.editorForeground.nsColor,
-        .paragraphStyle: ParagraphStyle.make(for: preferences),
-      ], range: full)
+    styled.setAttributes(bodyAttributes, range: full)
 
     for token in highlighter.tokens(in: text) {
-      let style = palette.style(for: token.kind)
-      let resolved = resolver.resolve(for: style)
-      var attributes: [NSAttributedString.Key: Any] = [
-        .font: resolved.font, .foregroundColor: style.color.nsColor,
-      ]
-      if resolved.needsSyntheticBold {
-        // 負の値は塗りと縁の両方を描く。縁の色を前景と揃えて太さだけを足す。
-        attributes[.strokeWidth] = Self.syntheticBoldStroke
-        attributes[.strokeColor] = style.color.nsColor
-      }
-      styled.addAttributes(attributes, range: token.range)
+      styled.addAttributes(attributes(for: token.kind), range: token.range)
     }
     styled.endEditing()
     // フォントのフォールバック・段落属性の遅延補正を済ませてから比較する。
