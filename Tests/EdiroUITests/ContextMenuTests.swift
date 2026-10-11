@@ -107,7 +107,7 @@ extension AppKitTests {
       .init("汉字 zz", 0, 2, click: 0),
       .init("! zz", 0, 1, click: 0),
       .init("日本 zz", 0, 2, click: 0),
-      // 誤りの単語の上。候補などはスペルチェックの項目なので、比べる対象から外す。
+      // 誤りの単語の上。候補、Ignore Spelling、Learn Spelling も比べる。
       .init("This is a mispeled word.", 0, 0, click: 12),
     ]
 
@@ -145,23 +145,15 @@ extension AppKitTests {
       "_rvMenuItemAction": "lookUp", "lookUpFromMenu:": "lookUp", "translateFromMenu:": "lookUp",
     ]
 
-    /// 比べる対象から外す項目。
-    /// - Search With Google と Report a Concern: NSTextView は private の action で出し、
-    ///   代わりの公開 API が無いので、このエディタは出さない。
-    /// - 誤りの単語の候補、Ignore Spelling、Learn Spelling: スペルチェックの項目で、
-    ///   このエディタはまだ持たない。スペルチェックを実装したら比べる。
+    /// 比べる対象から外す項目。Search With Google と Report a Concern は、NSTextView が
+    /// private の action で出し、代わりの公開 API が無いので、このエディタは出さない。
     private static let excludedActions: Set<String> = [
       "_searchWithGoogleFromMenu:", "_invokeProofreadingFeedbackReportConcern:",
-      "_changeSpellingFromMenu:", "_ignoreSpellingFromMenu:", "_learnSpellingFromMenu:",
     ]
 
-    /// 比べる対象から外すサブメニュー。そのサブメニューが含む action で見分ける。
-    /// - Layout Orientation: 縦書きは扱わない。
-    /// - Spelling and Grammar と Substitutions: スペルチェックと自動置換の項目で、このエディタは
-    ///   まだ持たない。それらを実装したら比べる。
-    private static let excludedSubmenuActions: Set<String> = [
-      "changeLayoutOrientation:", "showGuessPanel:", "orderFrontSubstitutionsPanel:",
-    ]
+    /// 比べる対象から外すサブメニュー。そのサブメニューが含む action で見分ける。縦書き
+    /// (Layout Orientation) は扱わない。
+    private static let excludedSubmenuActions: Set<String> = ["changeLayoutOrientation:"]
 
     /// 有効かどうかを比べない項目。Writing Tools の項目の有効・無効は、このビューが Writing
     /// Tools に対応するまで NSTextView と同じにならない。対応したら比べる。
@@ -169,10 +161,6 @@ extension AppKitTests {
 
     private func isExcluded(_ item: NSMenuItem) -> Bool {
       if let action = item.action, Self.excludedActions.contains(NSStringFromSelector(action)) {
-        return true
-      }
-      // Ignore Spelling と Learn Spelling は、NSTextCheckingController を宛先にする。
-      if let target = item.target, String(describing: type(of: target)).contains("TextChecking") {
         return true
       }
       return item.submenu?.items.contains {

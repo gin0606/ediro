@@ -42,7 +42,7 @@ extension EditorView: NSServicesMenuRequestor {
       clicked = layout.characterIndex(at: containerPoint(event))
     }
     if session.markedRange != nil {
-      withoutScrolling { perform { try session.commitComposition() } }
+      withoutScrolling { commitComposition() }
       inputContext?.discardMarkedText()
     }
     // 調べる対象は、クリックで選択を変える前の選択から決める。文字の無い所のクリックでは
@@ -137,7 +137,7 @@ extension EditorView: NSServicesMenuRequestor {
   }
 
   /// NSTextView の既定のメニューにある項目の写し。題名はシステムの言語に従う。
-  private func standardItem(_ action: Selector, fallback: String) -> NSMenuItem {
+  func standardItem(_ action: Selector, fallback: String) -> NSMenuItem {
     let item =
       Self.findItem(in: NSTextView.defaultMenu) { $0.action == action }?.copy() as? NSMenuItem
       ?? NSMenuItem(title: fallback, action: action, keyEquivalent: "")
@@ -146,7 +146,7 @@ extension EditorView: NSServicesMenuRequestor {
   }
 
   /// NSTextView の既定のメニューで、`action` の項目を持つサブメニューの題名。
-  private func standardSubmenuTitle(containing action: Selector, fallback: String) -> String {
+  func standardSubmenuTitle(containing action: Selector, fallback: String) -> String {
     Self.findItem(in: NSTextView.defaultMenu) { item in
       item.submenu?.items.contains { $0.action == action } == true
     }?.title ?? fallback

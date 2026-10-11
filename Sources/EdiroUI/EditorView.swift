@@ -54,12 +54,20 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// 翻訳のポップオーバーに渡す内容と、それを本文の上に出す透明なビュー。
   var translation = TranslationRequest()
   var translationAnchor: NSView?
+  /// スペルと文法の検査と自動置換。
+  private(set) lazy var textChecker = TextChecker(view: self)
+  /// 打鍵で文字を入れている間。打鍵で入った文字は、通知の後で自動置換と検査に回す。
+  private var isTyping = false
+  /// 打鍵で入った文字の範囲。打鍵の後で自動置換と検査に回す。
+  private var typedRanges: [NSRange] = []
 
   init(text: String) {
     document = Self.makeDocument(text)
     session = try! EditorSession(document: document)
     super.init(frame: .zero)
     layout.replaceAll(with: document.snapshot.text)
+    textChecker.reset(text: document.snapshot.text)
+    contextMenuAdditions = textCheckingMenuAdditions
     attach()
   }
 
@@ -84,6 +92,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     document = Self.makeDocument(text)
     session = try! EditorSession(document: document)
     layout.replaceAll(with: document.snapshot.text)
+    textChecker.reset(text: document.snapshot.text)
     textVersion += 1
     attach()
     textDidChange(IndexSet(integersIn: 0..<document.snapshot.lineCount))
@@ -98,12 +107,21 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     if !keepsKill, [.edit, .undo, .redo, .composition, .selection].contains(event.kind) {
       lastKillAppending = nil
     }
-    for batch in event.batches { layout.apply(batch) }
+    // 打鍵の分は打鍵の後で自動置換と検査に回す。変換中の文字は、確定するときに検査に回す。
+    let checks = !isTyping && [.edit, .undo, .redo].contains(event.kind)
+    for batch in event.batches {
+      layout.apply(batch)
+      let changed = textChecker.apply(batch, typed: isTyping)
+      if isTyping { typedRanges += changed }
+      // 検査を待つ範囲は、後の差分に合わせて注釈と一緒にずれる。
+      if checks { changed.forEach(textChecker.checkSpelling(in:)) }
+    }
     if event.changes.contains(.text) { textVersion += 1 }
     // 変換を確定しただけの通知は本文を変えないが、未確定だった文字が下書きに加わる。
     if !event.changes.isDisjoint(with: [.text, .composition, .lineTokens]) {
       textDidChange(event.retokenizedLines)
     }
+    if event.changes.contains(.selection) { textChecker.controller.didChangeSelectedRange() }
     if event.changes.contains(.text) || event.changes.contains(.selection) {
       needsDisplay = true
       updateCarets()
@@ -406,7 +424,9 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     let texts = session.selections.map { selection in
       "\n" + Indentation.leadingWhitespace(in: text, at: offset(of: selection.range.start))
     }
-    perform { try session.type(texts, historyGroup: "typing") }
+    typing {
+      try session.type(texts, historyGroup: "typing")
+    }
   }
 
   // MARK: - キー入力
@@ -602,8 +622,13 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   override func insertNewlineIgnoringFieldEditor(_ sender: Any?) { insertNewlineKeepingIndent() }
   override func insertLineBreak(_ sender: Any?) { insertNewlineKeepingIndent() }
   override func insertParagraphSeparator(_ sender: Any?) { insertNewlineKeepingIndent() }
-  override func insertTab(_ sender: Any?) { type("\t") }
-  override func insertTabIgnoringFieldEditor(_ sender: Any?) { type("\t") }
+  override func insertTab(_ sender: Any?) { typeTab() }
+  override func insertTabIgnoringFieldEditor(_ sender: Any?) { typeTab() }
+
+  /// タブも打鍵で入った文字として、自動置換と検査に回す。
+  private func typeTab() {
+    typing { try session.type("\t", historyGroup: "typing") }
+  }
 
   override func selectAll(_ sender: Any?) {
     select([NSRange(location: 0, length: layout.storage.length)], primary: 0)
@@ -928,7 +953,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     scroll(CGPoint(x: visible.minX, y: visible.minY + distance))
   }
 
-  /// 引用符の自動置換を通さずに入れる。置換はまだ無いので、打鍵と同じになる。
+  /// 引用符の自動置換を通さずに入れる。打鍵ではない入力として入れるので、自動置換は掛からない。
   override func insertSingleQuoteIgnoringSubstitution(_ sender: Any?) { type("'") }
   override func insertDoubleQuoteIgnoringSubstitution(_ sender: Any?) { type("\"") }
 
@@ -1001,6 +1026,10 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+    if let action = item.action, let enabled = textCheckingToggles[action] {
+      (item as? NSMenuItem)?.state = enabled ? .on : .off
+      return true
+    }
     switch item.action {
     case #selector(undo(_:)): return document.canUndo
     case #selector(redo(_:)): return document.canRedo
@@ -1070,7 +1099,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     window?.makeFirstResponder(self)
     // 先に確定してから IME に知らせる。逆だと IME の確定と二重になる。
     if session.markedRange != nil {
-      perform { try session.commitComposition() }
+      commitComposition()
       inputContext?.discardMarkedText()
     }
     let clicked = layout.offset(at: containerPoint(event))
@@ -1146,11 +1175,11 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   func insertText(_ string: Any, replacementRange: NSRange) {
     let text = self.string(from: string)
     if session.markedRange != nil {
-      perform { try session.commitComposition(text) }
+      commitComposition(text)
       return
     }
     let primary = nsRange(of: session.primarySelection.range)
-    perform {
+    typing {
       if let widening = widening(of: replacementRange, around: primary) {
         if widening != (0, 0) {
           // 本文の端や文字の途中にはみ出すキャレットは広げずに置く。
@@ -1176,7 +1205,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
     let text = self.string(from: string)
-    perform {
+    let updated = perform {
       if session.markedRange == nil {
         if text.isEmpty { return }
         try session.beginComposition()
@@ -1189,14 +1218,57 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       try session.updateComposition(
         text, markedSelection: start..<end, replacingBefore: widening.before,
         replacingAfter: widening.after)
-      // 全て消した変換は終える。空の未確定文字を残すと IME と食い違う。
-      if text.isEmpty { try session.commitComposition() }
     }
+    // 全て消した変換は終える。空の未確定文字を残すと IME と食い違う。
+    if updated, text.isEmpty, session.markedRange != nil { commitComposition() }
   }
 
   func unmarkText() {
     guard session.markedRange != nil else { return }
-    perform { try session.commitComposition() }
+    commitComposition()
+  }
+
+  /// 変換中の文字を確定する。`text` を渡すと、未確定の文字をそれに置き換えてから確定する。
+  /// 確定した文字は、NSTextView と同じく自動置換せず、入力中の検査だけに回す。
+  @discardableResult
+  func commitComposition(_ text: String? = nil) -> Bool {
+    let marked = session.markedRanges.map { nsRange(of: $0) }
+    guard perform({ try session.commitComposition(text) }) else { return false }
+    // 確定した後の各キャレットは、確定した文字の後ろにある。確定した文字は、変換していた範囲の
+    // 先頭からキャレットまで。前の範囲で長さが変わった分だけ、後ろの範囲の先頭がずれる。
+    let heads = session.selections.map { offset(of: $0.head) }
+    guard marked.count == heads.count else {
+      // 確定でキャレットがまとまると、範囲とキャレットの対応が分からない。最初の範囲から
+      // 最後のキャレットまでをまとめて検査する。
+      if let start = marked.first?.location, let end = heads.last {
+        textChecker.checkSpelling(in: NSRange(location: min(start, end), length: abs(end - start)))
+      }
+      return true
+    }
+    var delta = 0
+    for (range, head) in zip(marked, heads) {
+      let start = range.location + delta
+      let end = max(head, start)
+      textChecker.checkSpelling(in: NSRange(location: start, length: end - start))
+      delta += end - start - range.length
+    }
+    return true
+  }
+
+  /// 打鍵で文字を入れる。入った文字を、打鍵で入った文字として自動置換と検査に回す。
+  @discardableResult
+  private func typing(_ operation: () throws -> Void) -> Bool {
+    isTyping = true
+    typedRanges = []
+    let typed = perform(operation)
+    isTyping = false
+    let ranges = typedRanges
+    typedRanges = []
+    guard typed else { return false }
+    textChecker.insertedText(in: ranges.filter { $0.length > 0 })
+    // 打鍵の経路で文字を消しただけの範囲 (入力メソッドが空の文字を入れた場合など) は検査し直す。
+    ranges.filter { $0.length == 0 }.forEach(textChecker.checkSpelling(in:))
+    return true
   }
 
   func selectedRange() -> NSRange { nsRange(of: session.primarySelection.range) }
