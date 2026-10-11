@@ -13,6 +13,8 @@ extension EditorView: NSChangeSpelling, NSIgnoreMisspelledWords {
       guard newValue != isContinuousSpellCheckingEnabled else { return }
       textChecker.settings.continuousSpellChecking = newValue
       textChecker.continuousCheckingDidChange()
+      // 文法の誤りを示している途中のアニメーションも取りやめる。
+      if !newValue { cancelGrammarIndications(Array(writingTools.indications.keys)) }
     }
   }
 
@@ -23,6 +25,8 @@ extension EditorView: NSChangeSpelling, NSIgnoreMisspelledWords {
       guard newValue != isGrammarCheckingEnabled else { return }
       textChecker.settings.grammarChecking = newValue
       textChecker.grammarCheckingDidChange()
+      // 文法の誤りを示している途中のアニメーションも取りやめる。
+      if !newValue { cancelGrammarIndications(Array(writingTools.indications.keys)) }
     }
   }
 

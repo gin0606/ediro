@@ -103,7 +103,8 @@ extension EditorView: NSServicesMenuRequestor {
 
   func contextMenu(for request: ContextMenuRequest) -> NSMenu {
     let menu = NSMenu()
-    // Writing Tools の項目はここで並べる。AppKit にも足させると二重になる。
+    // Writing Tools の項目はここで並べる。AppKit がこのビューのメニューに項目を足すかは表示の
+    // 時点まで分からないので、足した場合に二重にならないよう自動の挿入は切る。
     menu.automaticallyInsertsWritingToolsItems = false
     func additions(_ position: ContextMenuAddition.Position) -> [NSMenuItem] {
       contextMenuAdditions.filter { $0.position == position }.flatMap { $0.items(request) }
@@ -416,13 +417,7 @@ extension EditorView: NSServicesMenuRequestor {
       return NSSound.beep()
     }
     let replacement = Replacement(range, Self.normalizingLineEndings(translated))
-    let selecting = session.selections.map { selection -> (anchor: Int, head: Int) in
-      (
-        offset(offset(of: selection.anchor), after: [replacement]),
-        offset(offset(of: selection.head), after: [replacement])
-      )
-    }
-    replace([replacement], selecting: selecting)
+    replace([replacement], selecting: selections(after: [replacement]))
   }
 
   // MARK: - 書式なしのペースト

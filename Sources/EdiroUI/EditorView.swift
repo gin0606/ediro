@@ -60,6 +60,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   private var isTyping = false
   /// 打鍵で入った文字の範囲。打鍵の後で自動置換と検査に回す。
   private var typedRanges: [NSRange] = []
+  /// Writing Tools に渡した本文の範囲と、その動作中の状態。
+  var writingTools = WritingToolsState()
 
   init(text: String) {
     document = Self.makeDocument(text)
@@ -69,6 +71,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     textChecker.reset(text: document.snapshot.text)
     contextMenuAdditions = textCheckingMenuAdditions
     attach()
+    setUpWritingTools()
   }
 
   /// 本文を持つ Document。Markdown の行トークンはエンジンが編集のたびに作り直す。
@@ -81,6 +84,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   /// 本文を外から差し替える。取り消し履歴も選択も作り直す。
   func replaceText(_ text: String) {
+    stopWritingToolsForReplacement()
     if session.markedRange != nil {
       try? session.cancelComposition()
       inputContext?.discardMarkedText()
@@ -110,6 +114,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     // 打鍵の分は打鍵の後で自動置換と検査に回す。変換中の文字は、確定するときに検査に回す。
     let checks = !isTyping && [.edit, .undo, .redo].contains(event.kind)
     for batch in event.batches {
+      trackWritingToolsContexts(batch, undoRedo: [.undo, .redo].contains(event.kind))
       layout.apply(batch)
       let changed = textChecker.apply(batch, typed: isTyping)
       if isTyping { typedRanges += changed }
@@ -127,6 +132,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       updateCarets()
       if scrollsToSelection { scrollToPrimary() }
     }
+    sendWritingToolsUpdates()
   }
 
   private var scrollsToSelection = true
@@ -188,10 +194,12 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// 幅は外から与えられ、高さは本文から決まる。表示領域より短い本文でも、余白の
   /// クリックを受けられるよう表示領域いっぱいまで伸ばす。
   override func setFrameSize(_ newSize: NSSize) {
+    let width = layout.container.size.width
     layout.setWidth(max(newSize.width - inset.width * 2, 0))
     let visible = enclosingScrollView?.contentSize.height ?? 0
     let height = max(layout.usedHeight + inset.height * 2, visible)
     super.setFrameSize(NSSize(width: newSize.width, height: height))
+    if layout.container.size.width != width { writingToolsLayoutDidChange() }
     updateCarets()
   }
 
@@ -207,17 +215,47 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     backgroundColor.setFill()
     dirtyRect.fill()
     let origin = textOrigin
+    guard let context = NSGraphicsContext.current?.cgContext else { return }
 
-    (isActive ? NSColor.selectedTextBackgroundColor : .unemphasizedSelectedTextBackgroundColor)
-      .setFill()
-    // 変換中の選択はいま変換している文節を指す。背景ではなく太い下線で示す。
-    for selection in session.selections where !selection.isEmpty && session.markedRange == nil {
-      for rect in layout.selectionRects(nsRange(of: selection.range)) {
-        rect.offsetBy(dx: origin.x, dy: origin.y).fill()
+    func drawSelectionAndText() {
+      (isActive ? NSColor.selectedTextBackgroundColor : .unemphasizedSelectedTextBackgroundColor)
+        .setFill()
+      // 変換中の選択はいま変換している文節を指す。背景ではなく太い下線で示す。
+      // Writing Tools が書き換えを流し込んでいる間は、選択を見せない (NSTextView と同じ)。
+      let showsSelection =
+        session.markedRange == nil && writingTools.state != .interactiveStreaming
+      for selection in session.selections where !selection.isEmpty && showsSelection {
+        for rect in layout.selectionRects(nsRange(of: selection.range)) {
+          rect.offsetBy(dx: origin.x, dy: origin.y).fill()
+        }
       }
+      drawText(in: context, dirtyRect: dirtyRect)
     }
 
-    guard let context = NSGraphicsContext.current?.cgContext else { return }
+    // Writing Tools がアニメーションで本文の画像を重ねている所は本文と選択を消し、待機中の
+    // 所は薄くする。本文と選択を別の層に描いて、その層から消す。
+    let (hidden, dimmed) = writingToolsHiddenRects(in: dirtyRect)
+    if hidden.isEmpty && dimmed.isEmpty {
+      drawSelectionAndText()
+    } else {
+      context.saveGState()
+      context.beginTransparencyLayer(auxiliaryInfo: nil)
+      drawSelectionAndText()
+      context.setBlendMode(.destinationOut)
+      context.setFillColor(gray: 0, alpha: 0.5)
+      context.fill(dimmed)
+      context.setBlendMode(.clear)
+      context.fill(hidden)
+      context.endTransparencyLayer()
+      context.restoreGState()
+    }
+
+    drawMarkedText(origin: origin)
+  }
+
+  /// `dirtyRect` (ビューの座標) に掛かる本文を描く。
+  func drawText(in context: CGContext, dirtyRect: NSRect) {
+    let origin = textOrigin
     layout.layoutManager.enumerateTextLayoutFragments(
       from: layout.layoutManager.documentRange.location, options: [.ensuresLayout]
     ) { fragment in
@@ -227,8 +265,6 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       if surface.intersects(dirtyRect) { fragment.draw(at: frame.origin, in: context) }
       return true
     }
-
-    drawMarkedText(origin: origin)
   }
 
   /// 変換中の文字に下線を引く。いま変換している文節は太くする。
@@ -264,10 +300,17 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       carets.append(caret)
     }
     while carets.count > points.count { carets.removeLast().removeFromSuperview() }
+    // Writing Tools が書き換えを流し込んでいる間と、アニメーションで本文を隠している所では、
+    // キャレットを見せない。
+    let hidden = writingToolsHiddenRects(in: bounds).hidden
     for (caret, rect) in zip(carets, points) {
       caret.frame = rect
       caret.color = insertionPointColor
-      caret.displayMode = isActive ? .automatic : .hidden
+      // 隠している文字に接しているだけのキャレットは隠さない。
+      let center = CGPoint(x: rect.midX, y: rect.midY)
+      let covered = hidden.contains { $0.insetBy(dx: 0.5, dy: 0).contains(center) }
+      caret.displayMode =
+        isActive && writingTools.state != .interactiveStreaming && !covered ? .automatic : .hidden
     }
   }
 
@@ -337,8 +380,10 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   /// 選択を置き換え、`primary` 番目を主にする。
-  func select(_ ranges: [NSRange], primary: Int) {
-    perform { try session.setSelections(ranges.map(selection), primary: primary) }
+  /// `beepsOnFailure` が false なら、断られても警告音を鳴らさない (利用者の操作でない選択)。
+  func select(_ ranges: [NSRange], primary: Int, beepsOnFailure: Bool = true) {
+    let change = { try self.session.setSelections(ranges.map(self.selection), primary: primary) }
+    if beepsOnFailure { perform(change) } else { try? change() }
   }
 
   /// 単語の境界への移動。範囲を選んだまま広げずに動かすと、進む向きの端から動く。
@@ -666,18 +711,31 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     return offset + delta
   }
 
+  /// 重ならない置き換えを位置の順に当てた後の、今の選択の位置。
+  func selections(after replacements: [Replacement]) -> [(anchor: Int, head: Int)] {
+    session.selections.map { selection in
+      (
+        offset(offset(of: selection.anchor), after: replacements),
+        offset(offset(of: selection.head), after: replacements)
+      )
+    }
+  }
+
   /// 重ならない置き換えを位置の順に当て、選択を `selecting` に置く。一回の取り消しで、本文と
   /// 選択を元に戻す。
+  /// `beepsOnFailure` が false なら、断られても警告音を鳴らさない (利用者の操作でない置き換え)。
   @discardableResult
   func replace(
     _ replacements: [Replacement], selecting: [(anchor: Int, head: Int)],
-    historyGroup: String? = nil
+    historyGroup: String? = nil, beepsOnFailure: Bool = true
   ) -> Bool {
-    perform {
-      try session.replace(
-        replacements.map { TextEdit(textRange(of: $0.range), $0.text) }, selecting: selecting,
-        historyGroup: historyGroup)
+    let edit = {
+      try self.session.replace(
+        replacements.map { TextEdit(self.textRange(of: $0.range), $0.text) },
+        selecting: selecting, historyGroup: historyGroup)
     }
+    guard beepsOnFailure else { return (try? edit()) != nil }
+    return perform(edit)
   }
 
   /// 選択ごとに、`edit` が選択の番号と範囲から返す範囲を文字列で置き換える。nil を返した

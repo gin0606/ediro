@@ -165,7 +165,14 @@ or history; typing unchanged text still collapses selections.
 
 One effective batch is one history entry. Consecutive entries with the same non-nil
 group string form one undo step, unless any session's selections changed between them,
-as when a caret moves elsewhere; `endHistoryGroup()` sets an explicit boundary. A new
+as when a caret moves elsewhere; `endHistoryGroup()` sets an explicit boundary.
+`beginHistoryGroup(_:)` sets a boundary and holds the group open, as `heldGroup`, until
+`endHistoryGroup()`:
+its entries form one undo step even when selections change between them, which suits one
+operation that edits and selects in several steps. Undo or redo still ends the step, and a
+composition records its own step without releasing the group. While a group is held,
+`endHistoryGroup()` closes only that group's step, so a step of another group, such as
+typing after the last held edit, can still continue. A new
 edit after undo clears redo. Versions are monotonically increasing, including undo,
 redo and provisional input. Undo/redo restores session selections saved in the entry
 for sessions still attached; later-created sessions track the inverse/forward edits.

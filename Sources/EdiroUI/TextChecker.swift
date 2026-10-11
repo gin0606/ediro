@@ -60,6 +60,9 @@ final class TextChecker: NSObject {
   /// 変えるまで持つ。
   var allowsRequestedMarks = false
   private var isCheckScheduled = false
+  /// 文法の誤りの印を付けたことをビューに知らせた文字。検査し直して同じ印を付け直しても、
+  /// その文字を編集するまで知らせ直さない。
+  private var indicatedGrammar = IndexSet()
 
   init(view: EditorView) {
     self.view = view
@@ -83,6 +86,7 @@ final class TextChecker: NSObject {
     untyped = IndexSet(integersIn: 0..<annotations.length)
     pendingChecks = IndexSet()
     requested = IndexSet()
+    indicatedGrammar = IndexSet()
     allowsRequestedMarks = false
     controller = NSTextCheckingController(client: self)
     NSSpellChecker.shared.closeSpellDocument(withTag: controller.spellCheckerDocumentTag)
@@ -104,7 +108,10 @@ final class TextChecker: NSObject {
       annotations.replaceCharacters(
         in: NSRange(location: change.offset, length: change.removedLength),
         with: NSAttributedString(string: change.insertedText))
-      for indices in [\TextChecker.untyped, \TextChecker.pendingChecks, \TextChecker.requested] {
+      for indices in [
+        \TextChecker.untyped, \TextChecker.pendingChecks, \TextChecker.requested,
+        \TextChecker.indicatedGrammar,
+      ] {
         self[keyPath: indices].remove(integersIn: change.offset..<change.offset + change.removedLength)
         self[keyPath: indices].shift(
           startingAt: change.offset + change.removedLength, by: length - change.removedLength)
@@ -225,24 +232,99 @@ final class TextChecker: NSObject {
   func grammarCheckingDidChange() {
     let full = NSRange(location: 0, length: annotations.length)
     if !settings.grammarChecking {
-      let grammar = NSAttributedString.SpellingState.grammar.rawValue
-      let grammarKeys = markKeys.filter { $0.rawValue.contains("Grammar") }
-      var runs: [(NSRange, Int)] = []
-      annotations.enumerateAttribute(.spellingState, in: full) { value, run, _ in
-        guard let state = (value as? String).flatMap(Int.init), state & grammar != 0 else { return }
-        runs.append((run, state & ~grammar))
-      }
-      for (run, state) in runs {
-        for key in grammarKeys { annotations.removeAttribute(key, range: run) }
-        if state & NSAttributedString.SpellingState.spelling.rawValue == 0 {
-          for key in markKeys { annotations.removeAttribute(key, range: run) }
-        } else {
-          annotations.addAttribute(.spellingState, value: String(state), range: run)
-        }
-      }
+      removeGrammarMarks(in: full)
       refreshMarks()
     }
     if settings.continuousSpellChecking { checkSpelling(in: full) }
+  }
+
+  /// `range` の中の文法の誤りの印と詳細を外す。スペルの印は残す。外したら true。
+  @discardableResult
+  func removeGrammarMarks(in range: NSRange) -> Bool {
+    let grammar = NSAttributedString.SpellingState.grammar.rawValue
+    let grammarKeys = markKeys.filter { $0.rawValue.contains("Grammar") }
+    var runs: [(NSRange, Int)] = []
+    annotations.enumerateAttribute(.spellingState, in: range) { value, run, _ in
+      guard let state = (value as? String).flatMap(Int.init), state & grammar != 0 else { return }
+      runs.append((run, state & ~grammar))
+    }
+    for (run, state) in runs {
+      for key in grammarKeys { annotations.removeAttribute(key, range: run) }
+      if state & NSAttributedString.SpellingState.spelling.rawValue == 0 {
+        for key in markKeys { annotations.removeAttribute(key, range: run) }
+      } else {
+        annotations.addAttribute(.spellingState, value: String(state), range: run)
+      }
+    }
+    return !runs.isEmpty
+  }
+
+  // MARK: - 文法の誤り (Writing Tools の文法の提示)
+
+  /// 文法の誤りの印を付けている文字の範囲。続く文字の印は一つの範囲にまとめる。
+  private func grammarMarks(in range: NSRange) -> [NSRange] {
+    let grammar = NSAttributedString.SpellingState.grammar.rawValue
+    var marks: [NSRange] = []
+    annotations.enumerateAttribute(.spellingState, in: range) { value, run, _ in
+      guard let state = (value as? String).flatMap(Int.init), state & grammar != 0 else { return }
+      if let last = marks.last, NSMaxRange(last) == run.location {
+        marks[marks.count - 1] = NSUnionRange(last, run)
+      } else {
+        marks.append(run)
+      }
+    }
+    return marks
+  }
+
+  /// `span` の中で、いま印を付けている文法の誤り。コントローラが印と一緒に付けた詳細 (説明、
+  /// 直し方、誤りの前後の文の長さ) から、文法の検査の結果と同じ形 (文の範囲と、文の先頭から
+  /// 数えた誤りの範囲を持つ詳細) にする。範囲は `span` の先頭から数える。文法の検査がオフなら空。
+  func grammarResults(in span: NSRange) -> [NSTextCheckingResult] {
+    let full = NSRange(location: 0, length: annotations.length)
+    guard settings.grammarChecking, NSIntersectionRange(span, full) == span else { return [] }
+    var sentences: [(range: NSRange, details: [[String: Any]])] = []
+    for mark in grammarMarks(in: span) {
+      let attributes = annotations.attributes(at: mark.location, effectiveRange: nil)
+      func offset(_ name: String) -> Int {
+        (attributes[NSAttributedString.Key(name)] as? String).flatMap(Int.init) ?? 0
+      }
+      let start = max(mark.location - offset("NSGrammarLeftOffset"), span.location)
+      let end = min(NSMaxRange(mark) + offset("NSGrammarRightOffset"), NSMaxRange(span))
+      let sentence = NSRange(location: start - span.location, length: end - start)
+      var detail: [String: Any] = [
+        NSGrammarRange: NSValue(range: NSRange(location: mark.location - start, length: mark.length))
+      ]
+      if let description = attributes[NSAttributedString.Key(NSGrammarUserDescription)] as? String {
+        detail[NSGrammarUserDescription] = description
+      }
+      if let corrections = attributes[NSAttributedString.Key(NSGrammarCorrections)] as? String {
+        detail[NSGrammarCorrections] = [corrections]
+      }
+      if let last = sentences.last, last.range == sentence {
+        sentences[sentences.count - 1].details.append(detail)
+      } else {
+        sentences.append((sentence, [detail]))
+      }
+    }
+    return sentences.map {
+      NSTextCheckingResult.grammarCheckingResult(range: $0.range, details: $0.details)
+    }
+  }
+
+  /// 示した誤りを取りやめたときに、検査し直したときにまた示せるようにする。
+  func forgetIndicatedGrammar(in range: NSRange) {
+    indicatedGrammar.remove(integersIn: range.location..<NSMaxRange(range))
+  }
+
+  /// コントローラが印を付けた後に、まだ知らせていない文法の誤りの印をビューに知らせる。
+  private func annotationsDidChange(in range: NSRange) {
+    let added = grammarMarks(in: range).filter {
+      !indicatedGrammar.contains(integersIn: $0.location..<NSMaxRange($0))
+    }
+    refreshMarks(in: range)
+    // 示さなかった印 (見えていないものなど) は、検査し直したときにまた示す機会を残す。
+    guard !added.isEmpty, let indicated = view?.grammarIssuesIndicated(added) else { return }
+    for mark in indicated { indicatedGrammar.insert(integersIn: mark.location..<NSMaxRange(mark)) }
   }
 
   /// 入切をオフにした後に届いた、オフにする前に頼んだ検査の結果の印を捨てる。
@@ -328,13 +410,13 @@ extension TextChecker: NSTextCheckingClient {
   func setAnnotations(_ annotations: [NSAttributedString.Key: String], range: NSRange) {
     guard let range = adjusted(range), range.length > 0 else { return }
     self.annotations.setAttributes(allowed(annotations), range: range)
-    refreshMarks(in: range)
+    annotationsDidChange(in: range)
   }
 
   func addAnnotations(_ annotations: [NSAttributedString.Key: String], range: NSRange) {
     guard let range = adjusted(range), range.length > 0 else { return }
     self.annotations.addAttributes(allowed(annotations), range: range)
-    refreshMarks(in: range)
+    annotationsDidChange(in: range)
   }
 
   func removeAnnotation(_ annotationName: NSAttributedString.Key, range: NSRange) {
@@ -364,12 +446,7 @@ extension TextChecker: NSTextCheckingClient {
     // エンジンは改行を LF に揃えて入れる。揃えた後の長さで選択と注釈の位置を求める。
     let text = EditorView.normalizingLineEndings(annotatedString.string)
     let replacement = EditorView.Replacement(range, text)
-    let selecting = view.session.selections.map { selection -> (anchor: Int, head: Int) in
-      (
-        view.offset(view.offset(of: selection.anchor), after: [replacement]),
-        view.offset(view.offset(of: selection.head), after: [replacement])
-      )
-    }
+    let selecting = view.selections(after: [replacement])
     isReplacing = true
     let replaced = view.replace(
       [replacement], selecting: selecting, historyGroup: currentReplacementGroup())
@@ -467,6 +544,18 @@ extension TextChecker: NSTextCheckingClient {
   /// テキスト補完は、この型が入切を持たない。
   var textCompletionType: NSTextInputTraitType {
     get { .no }
+    set {}
+  }
+
+  /// Writing Tools の扱いは、ビューの Writing Tools のコーディネータの値を伝える。エディタ
+  /// 全体の扱いなので、ここからは変えさせない。
+  var writingToolsBehavior: NSWritingToolsBehavior {
+    get { view?.writingToolsCoordinator?.preferredBehavior ?? .none }
+    set {}
+  }
+  /// 結果は書式なしのテキストだけを受け取るので、変えさせない。
+  var allowedWritingToolsResultOptions: NSWritingToolsResultOptions {
+    get { view?.writingToolsCoordinator?.preferredResultOptions ?? [] }
     set {}
   }
 

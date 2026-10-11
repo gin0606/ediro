@@ -84,6 +84,7 @@ public final class EditorTextController: NSObject {
   public func highlight() {
     attributer.applyAll(of: editorView.document, to: editorView.layout.storage)
     editorView.refreshLayout()
+    editorView.writingToolsLayoutDidChange()
   }
 
   /// 本文か変換の状態が変わるたびに、描画の前に呼ばれる。エンジンがトークンを作り直した

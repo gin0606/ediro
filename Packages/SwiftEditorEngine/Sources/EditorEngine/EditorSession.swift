@@ -313,7 +313,10 @@ func replacedStarts(_ ranges: [Range<Int>], lengths: [Int]) -> [Int] {
             replacedTexts: try selections.map { try snapshot.text(in: $0.range) }, ranges: selections.map(\.range), batches: [])
         document.activeComposition = composition
         document.compositionOwner = id
-        try document.endHistoryGroup()
+        // A held step continues after a composition that records nothing.
+        if document.heldGroup == nil || document.undoEntries.last?.group != document.heldGroup {
+            try document.markHistoryBoundary()
+        }
         document.emit(.composition)
     }
     /// Replaces every marked range with `text`. markedSelection uses UTF-16 offsets within the new

@@ -117,6 +117,8 @@ func inverse(_ changes: [ContentChange]) -> [ContentChange] {
     var root: RopeNode?
     var undoEntries: [HistoryEntry] = []
     var redoEntries: [HistoryEntry] = []
+    /// The group opened by `beginHistoryGroup(_:)`, which selection changes do not split.
+    public internal(set) var heldGroup: String?
     var editors: [UUID: WeakEditor] = [:]
     var listeners: [(token: UUID, callback: (DocumentEvent) -> Void)] = []
     /// Writes throw `reentrantMutation` while this is positive (during callbacks into the application).
@@ -235,8 +237,9 @@ func inverse(_ changes: [ContentChange]) -> [ContentChange] {
     }
     func record(before: RopeNode?, selections: [UUID: SelectionState], batches: [[ContentChange]], group: String?) {
         // Selections that changed since the previous edit, such as a caret moved elsewhere,
-        // start a new undo step even within a group.
-        if let group, let last = undoEntries.last, last.group == group, last.afterSelections == selections {
+        // start a new undo step even within a group, unless the group is held open.
+        if let group, let last = undoEntries.last, last.group == group,
+           last.afterSelections == selections || group == heldGroup {
             undoEntries[undoEntries.count - 1].after = root
             undoEntries[undoEntries.count - 1].batches += batches
             undoEntries[undoEntries.count - 1].afterSelections = selectionStates
@@ -273,7 +276,23 @@ func inverse(_ changes: [ContentChange]) -> [ContentChange] {
         emit(provisional ? .composition : .edit, batches: [prepared.changes])
         return version
     }
+    /// Starts a new undo step for `group` and keeps it open across selection changes until
+    /// `endHistoryGroup()`, for one operation that edits and selects in several steps.
+    public func beginHistoryGroup(_ group: String) throws {
+        try markHistoryBoundary()
+        heldGroup = group
+    }
+    /// Sets a boundary after the last undo step. While a group is held, it releases the group
+    /// and closes only that group's step, so a step of another group can still continue.
     public func endHistoryGroup() throws {
+        try ensureMutable()
+        if let last = undoEntries.indices.last, heldGroup == nil || undoEntries[last].group == heldGroup {
+            undoEntries[last].group = nil
+        }
+        heldGroup = nil
+    }
+    /// Starts a new undo step for the next edit without releasing a held group.
+    func markHistoryBoundary() throws {
         try ensureMutable()
         if !undoEntries.isEmpty { undoEntries[undoEntries.count - 1].group = nil }
     }

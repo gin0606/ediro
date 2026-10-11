@@ -155,8 +155,9 @@ extension AppKitTests {
     /// (Layout Orientation) は扱わない。
     private static let excludedSubmenuActions: Set<String> = ["changeLayoutOrientation:"]
 
-    /// 有効かどうかを比べない項目。Writing Tools の項目の有効・無効は、このビューが Writing
-    /// Tools に対応するまで NSTextView と同じにならない。対応したら比べる。
+    /// 有効かどうかを比べない項目。NSTextView は Writing Tools の項目に自分で応答するが、この
+    /// ビューは応答せず、応答連鎖の先の NSApplication が応答する。テストのプロセスでは
+    /// NSApplication はこの項目を無効にする (参照 NSTextView を第一応答者にしても無効) ので比べない。
     private static let enabledElsewhere: Set<String> = ["showWritingTools:"]
 
     private func isExcluded(_ item: NSMenuItem) -> Bool {
