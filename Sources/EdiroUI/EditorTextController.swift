@@ -10,12 +10,14 @@ public final class EditorTextController: NSObject {
   private var synchronizedText: String
   private var theme: Theme
   private var preferences: Preferences
+  private var attributer: MarkdownAttributer
 
   public init(state: AppState) {
     self.state = state
     self.synchronizedText = state.text
     self.theme = state.theme
     self.preferences = state.preferences
+    attributer = MarkdownAttributer(theme: state.theme, preferences: state.preferences)
 
     scrollView = NSScrollView()
     scrollView.hasVerticalScroller = true
@@ -25,7 +27,7 @@ public final class EditorTextController: NSObject {
     scrollView.documentView = editorView
     super.init()
 
-    editorView.didChangeText = { [weak self] in self?.textDidChange() }
+    editorView.didChangeText = { [weak self] lines in self?.textDidChange(lines) }
     applyAppearance()
     // 初回だけは待たずに掛ける。最初の描画が素の本文になるのを避ける。
     highlight()
@@ -65,6 +67,7 @@ public final class EditorTextController: NSObject {
     guard theme != state.theme || preferences != state.preferences else { return }
     theme = state.theme
     preferences = state.preferences
+    attributer = MarkdownAttributer(theme: theme, preferences: preferences)
     applyAppearance()
     highlight()
   }
@@ -77,15 +80,18 @@ public final class EditorTextController: NSObject {
     editorView.layout.emptyLineHeight = ceil(font.ascender - font.descender + font.leading)
   }
 
-  /// 本文全体の装飾を付け直す。
+  /// 本文全体の装飾を付け直す。外観が変わったときに使う。
   public func highlight() {
-    MarkdownAttributer(theme: theme, preferences: preferences).apply(to: editorView.layout.storage)
+    attributer.applyAll(of: editorView.document, to: editorView.layout.storage)
     editorView.refreshLayout()
   }
 
-  /// 本文か変換の状態が変わるたびに、描画の前に呼ばれる。
-  private func textDidChange() {
-    MarkdownAttributer(theme: theme, preferences: preferences).apply(to: editorView.layout.storage)
+  /// 本文か変換の状態が変わるたびに、描画の前に呼ばれる。エンジンがトークンを作り直した
+  /// 行だけ装飾を付け直す。編集した行は必ず含まれるので、挿入した文字が直前の文字から
+  /// 引き継いだ属性もここで正される。
+  private func textDidChange(_ retokenizedLines: IndexSet) {
+    attributer.apply(
+      lines: retokenizedLines, of: editorView.document, to: editorView.layout.storage)
     // 未確定の文字は下書きに含めない。確定した時点で反映する。
     guard !editorView.hasMarkedText() else { return }
     synchronizedText = editorView.text

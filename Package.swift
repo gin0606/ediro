@@ -10,6 +10,7 @@ let package = Package(
   targets: [
     .target(
       name: "EdiroCore",
+      dependencies: [.product(name: "EditorMarkdown", package: "SwiftEditorEngine")],
       swiftSettings: [.swiftLanguageMode(.v6)]
     ),
     .target(
@@ -17,6 +18,7 @@ let package = Package(
       dependencies: [
         "EdiroCore",
         .product(name: "EditorEngine", package: "SwiftEditorEngine"),
+        .product(name: "EditorMarkdown", package: "SwiftEditorEngine"),
       ],
       swiftSettings: [
         // UI 層はほぼ全てメインスレッド上で動くため、既定の隔離を MainActor にする。
@@ -44,7 +46,10 @@ let package = Package(
     ),
     .testTarget(
       name: "EdiroUITests",
-      dependencies: ["EdiroUI", "TestSupport"],
+      dependencies: [
+        "EdiroUI", "TestSupport", .product(name: "EditorEngine", package: "SwiftEditorEngine"),
+        .product(name: "EditorMarkdown", package: "SwiftEditorEngine"),
+      ],
       swiftSettings: [
         .defaultIsolation(MainActor.self),
         .swiftLanguageMode(.v6)

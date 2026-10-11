@@ -58,8 +58,7 @@ extension AppKitTests {
 
     /// 実テキストにハイライトを適用し、指定した部分文字列に付いたフォントを取り出す。
     private func font(in text: String, at substring: String) throws -> NSFont {
-      let storage = NSTextStorage(string: text)
-      MarkdownAttributer(theme: .fallback, preferences: .default).apply(to: storage)
+      let storage = highlighted(text)
       let range = (text as NSString).range(of: substring)
       try #require(range.location != NSNotFound)
       return try #require(storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont)
@@ -137,8 +136,7 @@ extension AppKitTests {
       preferences.fontName = name
 
       let text = "plain **bold**"
-      let storage = NSTextStorage(string: text)
-      MarkdownAttributer(theme: .fallback, preferences: preferences).apply(to: storage)
+      let storage = highlighted(text, preferences: preferences)
 
       func attributes(at substring: String) throws -> [NSAttributedString.Key: Any] {
         let range = (text as NSString).range(of: substring)

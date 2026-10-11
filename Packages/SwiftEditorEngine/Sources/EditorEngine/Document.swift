@@ -22,6 +22,8 @@ public struct DocumentChanges: OptionSet, Sendable {
     public static let semantics = DocumentChanges(rawValue: 1 << 3)
     /// Language request statuses for the document.
     public static let requests = DocumentChanges(rawValue: 1 << 4)
+    /// Line tokens from the document's line tokenizer; `DocumentEvent.retokenizedLines` names the lines.
+    public static let lineTokens = DocumentChanges(rawValue: 1 << 5)
 }
 public struct DocumentEvent: Sendable {
     /// The operation that caused the notification.
@@ -31,6 +33,9 @@ public struct DocumentEvent: Sendable {
     public let batches: [[ContentChange]]
     /// Everything the operation changed; one operation can change several kinds of state.
     public let changes: DocumentChanges
+    /// The lines whose line tokens were recomputed or removed, numbered in the text after the
+    /// operation. Every line an edit touched is included.
+    public let retokenizedLines: IndexSet
 }
 @MainActor public final class Subscription {
     private var cancellation: (() -> Void)?
@@ -134,10 +139,19 @@ func inverse(_ changes: [ContentChange]) -> [ContentChange] {
     var trackedRanges: [UUID: TrackedRange] = [:] { didSet { if !isTrackingSemantics { semanticsChanged(oldValue != trackedRanges) } } }
     var foldingRanges: [FoldingRange] = [] { didSet { if !isTrackingSemantics { semanticsChanged(oldValue != foldingRanges) } } }
     var inlayHints: [InlayHint] = [] { didSet { if !isTrackingSemantics { semanticsChanged(oldValue != inlayHints) } } }
+    /// Line tokens are kept apart from `tokens`: they are not tracked through edits, and
+    /// provider results never replace or clear them.
+    var lineTokenizer: AnyLineTokenizer?
+    var lineEntries: [LineEntry] = []
+    /// Collected as lines are tokenized and reported by the next notification.
+    var retokenizedLines = IndexSet()
 
-    public init(id: String, text: String = "", language: String = "plaintext", endOfLine: EndOfLine = .lf) {
+    public init(id: String, text: String = "", language: String = "plaintext", endOfLine: EndOfLine = .lf,
+                lineTokenizer: (any LineTokenizer)? = nil) {
         self.id = id; self.language = language; self.endOfLine = endOfLine
         root = RopeNode.build(Array(normalized(text, eol: endOfLine).utf16))
+        if let lineTokenizer { tokenizeAllLines(with: AnyLineTokenizer(lineTokenizer)) }
+        retokenizedLines = []; pendingChanges = []
     }
     public var snapshot: TextSnapshot {
         TextSnapshot(documentID: id, instanceID: instanceID, language: language, version: version, endOfLine: endOfLine, root: root)
@@ -169,8 +183,9 @@ func inverse(_ changes: [ContentChange]) -> [ContentChange] {
     func emit(_ kind: ChangeKind, batches: [[ContentChange]] = []) {
         if notificationSuppression > 0 { return }
         revealCarets()
-        let event = DocumentEvent(kind: kind, version: version, batches: batches, changes: pendingChanges)
-        pendingChanges = []
+        let event = DocumentEvent(kind: kind, version: version, batches: batches, changes: pendingChanges,
+                                  retokenizedLines: retokenizedLines)
+        pendingChanges = []; retokenizedLines = []
         whileLocked {
             // Call in registration order, skipping listeners cancelled by an earlier callback.
             for listener in listeners where listeners.contains(where: { $0.token == listener.token }) { listener.callback(event) }
@@ -215,6 +230,7 @@ func inverse(_ changes: [ContentChange]) -> [ContentChange] {
         let map = ChangeMap(prepared.changes)
         for editor in liveEditors { editor.track(from: old, map: map) }
         trackSemantics(from: old, map: map)
+        retokenizeLines(after: prepared.changes, in: old)
         invalidation?()
     }
     func record(before: RopeNode?, selections: [UUID: SelectionState], batches: [[ContentChange]], group: String?) {
@@ -328,6 +344,8 @@ func inverse(_ changes: [ContentChange]) -> [ContentChange] {
         if detached { pendingChanges.insert(.selection) }
         editors = [:]; undoEntries = []; redoEntries = []
         tokens = []; semanticTokens = []; diagnostics = []; decorations = []; trackedRanges = [:]; foldingRanges = []; inlayHints = []
+        if lineTokenizer != nil { retokenizedLines = IndexSet(integersIn: 0..<lineEntries.count); pendingChanges.insert(.lineTokens) }
+        lineTokenizer = nil; lineEntries = []
         emit(.disposed); listeners = []; invalidation = nil; semanticProviders = [:]; semanticVersions = [:]
     }
 }

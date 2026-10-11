@@ -1,12 +1,14 @@
 import AppKit
 import EdiroCore
+import EditorEngine
+import EditorMarkdown
 import Testing
 
 @testable import EdiroUI
 
 extension AppKitTests {
   struct MarkdownAttributerTests {
-    private final class EditRecorder: NSObject, NSTextStorageDelegate {
+    final class EditRecorder: NSObject, NSTextStorageDelegate {
       var ranges: [NSRange] = []
 
       func textStorage(
@@ -17,89 +19,31 @@ extension AppKitTests {
       }
     }
 
-    @Test func 同じハイライトを掛け直してもレイアウトを無効にしない() {
-      let storage = NSTextStorage(string: "# 見出し\n本文と**太字**\n")
-      let attributer = MarkdownAttributer(theme: .fallback, preferences: .default)
-      attributer.apply(to: storage)
-      let recorder = EditRecorder()
-      storage.delegate = recorder
-      let before = NSAttributedString(attributedString: storage)
-
-      attributer.apply(to: storage)
-
-      let beforeFont = before.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
-      let afterFont = storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
-      #expect(
-        recorder.ranges.isEmpty,
-        "before: \(beforeFont?.fontDescriptor.fontAttributes ?? [:])\nafter: \(afterFont?.fontDescriptor.fontAttributes ?? [:])"
-      )
-    }
-
-    @Test func 長文の下部の書式変更で上部を無効にしない() {
-      let prefix = String(repeating: "# 見出し\n本文と**太字**です。\n", count: 500)
-      let storage = NSTextStorage(string: prefix + "末尾の本文\n後続の本文")
-      let attributer = MarkdownAttributer(theme: .fallback, preferences: .default)
-      attributer.apply(to: storage)
-      let location = (prefix as NSString).length
-      storage.replaceCharacters(in: NSRange(location: location, length: 0), with: "# ")
-      let recorder = EditRecorder()
-      storage.delegate = recorder
-
-      attributer.apply(to: storage)
-
-      #expect(recorder.ranges.count == 1)
-      #expect(recorder.ranges.allSatisfy { $0.location >= location })
-      #expect(storage.string == prefix + "# 末尾の本文\n後続の本文")
-      let expected = NSTextStorage(string: storage.string)
-      attributer.apply(to: expected)
-      #expect(storage.isEqual(to: expected))
-
-      storage.replaceCharacters(in: NSRange(location: location, length: 2), with: "")
-      attributer.apply(to: storage)
-      let restored = NSTextStorage(string: prefix + "末尾の本文\n後続の本文")
-      attributer.apply(to: restored)
-      #expect(storage.isEqual(to: restored))
-    }
-
-    @Test(arguments: [
-      "> 引用¦", "# 見出し¦", "> 引用\n¦", "# 見出し\n¦",
-      "**太¦字**", "**太字**¦", "**¦太字**", "*斜¦体*", "*斜体*¦",
-      "`co¦de`", "`code`¦", "[la¦bel](url)", "[label](url)¦",
-      "- ¦item", "- item¦", "```\nco¦de\n```", "```\ncode\n```¦",
-      "> **太¦字**", "# `co¦de`", "😀> 引用¦", "¦",
-    ])
-    func 入力位置の属性が通常文字を挿入した構文に一致する(marked: String) {
-      let position = (marked as NSString).range(of: "¦").location
-      let text = marked.replacingOccurrences(of: "¦", with: "")
-      let attributer = MarkdownAttributer(theme: .fallback, preferences: .default)
-      let attributes = attributer.typingAttributes(
-        in: text, replacing: NSRange(location: position, length: 0))
-      let candidate = (text as NSString).replacingCharacters(
-        in: NSRange(location: position, length: 0), with: "a")
-      let expected = NSTextStorage(string: candidate)
-      attributer.apply(to: expected)
-      #expect(
-        NSDictionary(dictionary: attributes).isEqual(
-          to: expected.attributes(at: position, effectiveRange: nil)))
-    }
-
-    @Test func 選択した構文記号の置換には元の装飾を引き継がない() {
-      let attributer = MarkdownAttributer(theme: .fallback, preferences: .default)
-      let body = attributer.typingAttributes(in: "", replacing: NSRange(location: 0, length: 0))
-      for text in ["> 引用", "# 見出し", "**太字**", "*斜体*", "`code`", "[link](url)"] {
-        for range in [
-          NSRange(location: 0, length: 1), NSRange(location: 0, length: (text as NSString).length),
-        ] {
-          #expect(
-            NSDictionary(dictionary: attributer.typingAttributes(in: text, replacing: range))
-              .isEqual(to: body))
-        }
-      }
-    }
-
-    private func attributedFont(_ text: String, at substring: String) throws -> NSFont {
+    @Test func 指定した行だけ装飾を当て直す() {
+      let text = "# 見出し\n本文と**太字**\n> 引用"
+      let document = Document(id: "lines", text: text, lineTokenizer: MarkdownTokenizer())
       let storage = NSTextStorage(string: text)
-      MarkdownAttributer(theme: .fallback, preferences: .default).apply(to: storage)
+      let recorder = EditRecorder()
+      storage.delegate = recorder
+      let attributer = MarkdownAttributer(theme: .fallback, preferences: .default)
+      let untouched = NSAttributedString(attributedString: storage)
+
+      attributer.apply(lines: IndexSet(integer: 1), of: document, to: storage)
+
+      let line = (text as NSString).range(of: "本文と**太字**\n")
+      #expect(recorder.ranges == [line])
+      for other in [NSRange(location: 0, length: line.location), NSRange(location: NSMaxRange(line), length: storage.length - NSMaxRange(line))] {
+        #expect(storage.attributedSubstring(from: other).isEqual(to: untouched.attributedSubstring(from: other)))
+      }
+      let expected = highlighted(text)
+      #expect(
+        storage.attributedSubstring(from: line).isEqual(to: expected.attributedSubstring(from: line)))
+    }
+
+    private func attributedFont(
+      _ text: String, at substring: String, preferences: Preferences = .default
+    ) throws -> NSFont {
+      let storage = highlighted(text, preferences: preferences)
       let range = (text as NSString).range(of: substring)
       try #require(range.location != NSNotFound)
       return try #require(
@@ -107,8 +51,7 @@ extension AppKitTests {
     }
 
     private func attributedColor(_ text: String, at substring: String) throws -> NSColor {
-      let storage = NSTextStorage(string: text)
-      MarkdownAttributer(theme: .fallback, preferences: .default).apply(to: storage)
+      let storage = highlighted(text)
       let range = (text as NSString).range(of: substring)
       try #require(range.location != NSNotFound)
       return try #require(
@@ -141,6 +84,32 @@ extension AppKitTests {
       let code = try attributedColor("実行は `swift test` で", at: "`swift test`")
       let body = try attributedColor("実行は `swift test` で", at: "実行は")
       #expect(code != body)
+    }
+
+    /// 本文が等幅でない設定。既定の本文は等幅で、コードと書体では見分けられない。
+    private var proportional: Preferences {
+      var preferences = Preferences.default
+      preferences.fontName = "Helvetica"
+      return preferences
+    }
+
+    @Test func コードブロックは空行と改行まで等幅の書体になる() throws {
+      // 空行の高さを周りのコードの行と揃えるため、改行にもコードの書体を付ける。
+      let text = "```\na\n\nb\n```\nplain"
+      let storage = highlighted(text, preferences: proportional)
+      let code = try attributedFont(text, at: "a", preferences: proportional)
+      for location in [3, 5, 6, 8] {
+        let font = try #require(storage.attribute(.font, at: location, effectiveRange: nil) as? NSFont)
+        #expect(font.isFixedPitch && font.pointSize == code.pointSize, "\(location)")
+      }
+      #expect(try !attributedFont(text, at: "plain", preferences: proportional).isFixedPitch)
+    }
+
+    @Test func 閉じていないコードブロックは文書の末尾まで続く() throws {
+      let text = "plain\n```\n# not a heading\n**not bold**"
+      #expect(try attributedFont(text, at: "not a heading", preferences: proportional).isFixedPitch)
+      #expect(try attributedFont(text, at: "not bold", preferences: proportional).isFixedPitch)
+      #expect(try !attributedFont(text, at: "plain", preferences: proportional).isFixedPitch)
     }
   }
 }

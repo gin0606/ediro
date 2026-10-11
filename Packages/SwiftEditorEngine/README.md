@@ -2,7 +2,9 @@
 
 A UI-independent Swift editor engine inspired by a fixed revision of Monaco / VS Code.
 The `EditorEngine` library uses Swift and Foundation only. It has no JavaScript,
-Monaco, WebView, SwiftUI, AppKit or UIKit runtime dependency.
+Monaco, WebView, SwiftUI, AppKit or UIKit runtime dependency. The separate
+`EditorMarkdown` library, which depends on `EditorEngine` and Foundation only, adds a
+Markdown line tokenizer.
 
 ## Build and use
 
@@ -26,6 +28,8 @@ Add the directory as a local Swift package in Xcode, or from another package:
 .package(path: "../SwiftEditorEngine")
 // In the target dependencies:
 .product(name: "EditorEngine", package: "SwiftEditorEngine")
+// Optionally, for the Markdown line tokenizer:
+.product(name: "EditorMarkdown", package: "SwiftEditorEngine")
 ```
 
 The runnable [example](Sources/EditorExample/main.swift) uses only public APIs. It
@@ -68,6 +72,7 @@ It neither measures glyphs nor assumes monospaced text.
 | Sessions | Directed multiple selections with a primary selection, grapheme movement and deletion, typing the same or per-selection text, independently shared sessions, selections restored by undo/redo |
 | Input and layout | Begin/update/commit/cancel composition; `LayoutAdapter` for visual rows, preferred advances and display-position resolution |
 | Semantics | Lexical and semantic tokens, diagnostics, decorations, generic tracked ranges, nested folds and per-session collapse state, inlay hints |
+| Line tokenization | A `LineTokenizer` the document runs incrementally and synchronously on every edit, as Monaco's tokenization support does; per-line tokens and the lines each notification retokenized |
 | Language features | Completion, hover, signature help, definition, references, document symbols, rename, code actions, formatting; also providers for tokens, diagnostics, folds and hints |
 | Lifecycle | Request status/results and notifications, explicit cancellation, version/provenance validation, provider registration/unregistration, disposal |
 | Workspace editing | Resolve open documents by ID, mandatory target versions, preflight all targets before any change, route provider edits into normal history |
@@ -177,8 +182,10 @@ change several: an edit can move selections, track or stale semantic data and in
 request statuses, and a provider result changes both a request status and semantic data.
 React to `changes` rather than `kind`. `text` covers the text and version, `selection`
 the selections of any session or a session's disposal, `composition` provisional input,
-`semantics` semantic data, its freshness or any session's collapse state, and `requests`
-the document's request statuses. A flag is set only when that state changed during the
+`semantics` semantic data, its freshness or any session's collapse state, `requests`
+the document's request statuses, and `lineTokens` that lines were tokenized again,
+even to the same tokens, or lost their tokens, as `DocumentEvent.retokenizedLines`
+names. Other flags are set only when that state changed during the
 operation, so a notification can carry an empty set. Operations that replay several
 steps, such as undoing a grouped entry or cancelling a composition, report a state that
 changed along the way even if it ends where it started.
@@ -292,13 +299,51 @@ if let hint = view.inlayHints.first {
 }
 ```
 
+## Line tokenization
+
+A `LineTokenizer` turns one line and the state the previous line ended in into the
+line's tokens and the state it ends in, like Monaco's tokenization support. Pass one to
+`Document(id:text:language:endOfLine:lineTokenizer:)` or `setLineTokenizer(_:)`, which
+tokenize the whole text at once; `setLineTokenizer(nil)` removes the tokens. The line
+text includes its line break (the last line has none) and `LineToken.range` counts its
+UTF-16 units, so a token can cover the break, as a code block does to style empty lines.
+Ranges must stay within the line and off surrogate-pair and CRLF interiors.
+
+Every text change, whether an edit, undo, redo, a workspace transaction or provisional
+input and its cancellation, retokenizes synchronously before the notification: from the
+first changed line onward, stopping after the changed lines at the first line that ends
+in the state it ended in before. Each line keeps its state and tokens as lines are
+inserted or removed before it. `lineTokens(in:)` returns the tokens of a line range in
+document positions; a token covering a line break ends at the start of the next line.
+`DocumentEvent.retokenizedLines` lists the lines tokenized since the previous
+notification, or every line when the tokenizer is removed or the document disposed, numbered in the text the notification describes, so it includes every
+edited line and spans all batches of an undo or redo. An app restyles those lines only.
+Line tokens are independent of `tokens`: they are not tracked through edits, and
+neither `setTokens` nor provider registry changes replace or remove them.
+
+`EditorEngine` contains this mechanism only; language rules live elsewhere, such as
+`MarkdownTokenizer` in `EditorMarkdown`, so the engine itself still includes no parser.
+Unlike provider parsing, line tokenization runs on the main actor. Each run covers only
+the changed lines and those their states reach. A keystroke should take at most 16 ms
+(one 60 Hz frame) even when a state change reaches the end of a draft of about 25,000
+UTF-16 units, the size the application benchmarks; keep tokenizers to simple per-line
+scanning. The cost grows with the lines a state change reaches.
+
+`MarkdownTokenizer` recognizes headings with their level, strong, emphasis, inline code,
+fenced code blocks, links, list markers and blockquotes, exposed as `MarkdownTokenKind`
+with conversions to and from token kind and modifier strings. A fence left unclosed
+runs to the end of the document, as in CommonMark; its lines are tokens including their
+line breaks.
+
 ## Providers, async results and concurrency
 
 Mutable workspaces, documents, sessions, registrations and subscriptions are
 `@MainActor` isolated. Immutable snapshots and result models are `Sendable`. A provider
 receives a snapshot, feature, optional position/range and optional rename text. It can
 send the snapshot to a detached analysis task; CPU-heavy parsing should not run on the
-main actor. The package does not include any parser or LSP client.
+main actor. The engine does not include any parser or LSP client; line tokenizers, such
+as the Markdown one, are the incremental exception described in
+[Line tokenization](#line-tokenization).
 
 Register a `LanguageProvider` or `ClosureProvider` with a language and feature set;
 `"*"` matches every language. The last matching registration is selected. The app can

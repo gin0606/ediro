@@ -1,4 +1,7 @@
+import AppKit
 import EdiroCore
+import EditorEngine
+import EditorMarkdown
 import Foundation
 import TestSupport
 
@@ -22,4 +25,15 @@ func waitUntil(_ condition: () -> Bool, timeout: Duration = .milliseconds(500)) 
     try? await Task.sleep(for: .milliseconds(5))
   }
   return condition()
+}
+
+/// Markdown の装飾を本文全体に掛けた NSTextStorage。エディタと同じく、エンジンが作った
+/// 行トークンから属性を付ける。
+@MainActor func highlighted(
+  _ text: String, theme: Theme = .fallback, preferences: Preferences = .default
+) -> NSTextStorage {
+  let document = Document(id: "highlighted", text: text, lineTokenizer: MarkdownTokenizer())
+  let storage = NSTextStorage(string: document.snapshot.text)
+  MarkdownAttributer(theme: theme, preferences: preferences).applyAll(of: document, to: storage)
+  return storage
 }

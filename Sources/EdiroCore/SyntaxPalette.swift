@@ -1,3 +1,4 @@
+import EditorMarkdown
 import Foundation
 
 /// Markdown の構文要素に割り当てる見た目。
@@ -34,7 +35,7 @@ public struct SyntaxPalette: Sendable {
   private var code: RGBA { isDark ? RGBA(hex: 0xCE9178) : RGBA(hex: 0xA31515) }
   private var muted: RGBA { isDark ? RGBA(hex: 0x8A8A8A) : RGBA(hex: 0x6E6E6E) }
 
-  public func style(for kind: Token.Kind) -> SyntaxStyle {
+  public func style(for kind: MarkdownTokenKind) -> SyntaxStyle {
     switch kind {
     case .heading(let level):
       // 見出しは浅いほど大きく。

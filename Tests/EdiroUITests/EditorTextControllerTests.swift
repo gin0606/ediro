@@ -1,5 +1,7 @@
 import AppKit
 import EdiroCore
+import EditorEngine
+import EditorMarkdown
 import Testing
 
 @testable import EdiroUI
@@ -28,10 +30,18 @@ extension AppKitTests {
       view.session.selections.map { view.nsRange(of: $0.range) }
     }
 
-    private func expectHighlighted(_ view: EditorView, _ state: AppState) {
-      let expected = NSTextStorage(string: view.text)
-      MarkdownAttributer(theme: state.theme, preferences: state.preferences).apply(to: expected)
-      #expect(view.layout.storage.isEqual(to: expected))
+    /// 本文全体を初めから装飾した結果と、エディタの表示が一致する。
+    private func expectHighlighted(
+      _ view: EditorView, _ state: AppState, sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+      // TextKit 2 に載せた NSTextStorage は、和文などのフォールバックの書体を属性に書き込まない。
+      // 比べる側も同じく載せておく。
+      let document = Document(id: "expected", text: view.text, lineTokenizer: MarkdownTokenizer())
+      let expected = EditorLayout()
+      expected.replaceAll(with: view.text)
+      MarkdownAttributer(theme: state.theme, preferences: state.preferences)
+        .applyAll(of: document, to: expected.storage)
+      #expect(view.layout.storage.isEqual(to: expected.storage), sourceLocation: sourceLocation)
     }
 
     @Test func 長文の下部を編集しても表示位置と選択位置を保つ() async throws {
@@ -64,6 +74,35 @@ extension AppKitTests {
         let (_, view, state) = makeEditor(text: text)
         view.select([caret(location)], primary: 0)
         view.insertText("a", replacementRange: caret(NSNotFound))
+        expectHighlighted(view, state)
+      }
+    }
+
+    @Test func 先頭でフェンスを開いた直後から文書の末尾までコードの装飾になる() {
+      let (_, view, state) = makeEditor(text: "``\n# 見出し\n**太字**\n")
+      view.select([caret(2)], primary: 0)
+      view.insertText("`", replacementRange: caret(NSNotFound))
+      expectHighlighted(view, state)
+      let color = view.layout.storage.attribute(.foregroundColor, at: 4, effectiveRange: nil)
+      #expect(color as? NSColor == SyntaxPalette(theme: state.theme).style(for: .codeBlock).color.nsColor)
+      view.deleteBackward(nil)
+      expectHighlighted(view, state)
+    }
+
+    @Test func トークンが変わらない編集では編集した行の外の属性を当て直さない() {
+      let prefix = String(repeating: "# 見出し\n本文と**太字**です。\n", count: 500)
+      let (_, view, state) = makeEditor(text: prefix + "編集する本文\n後続の本文")
+      let recorder = MarkdownAttributerTests.EditRecorder()
+      view.layout.storage.delegate = recorder
+
+      for (location, input) in [((prefix as NSString).length + 2, "a"), (3, "b"), (0, "# ")] {
+        view.select([caret(location)], primary: 0)
+        recorder.ranges = []
+        view.insertText(input, replacementRange: caret(NSNotFound))
+        let line = (view.text as NSString).lineRange(for: caret(location))
+        let edited = recorder.ranges
+        #expect(!edited.isEmpty)
+        #expect(edited.allSatisfy { NSIntersectionRange($0, line) == $0 }, "\(edited) \(line)")
         expectHighlighted(view, state)
       }
     }
@@ -235,6 +274,17 @@ extension AppKitTests {
       #expect(await waitUntil { view.text == "差し替えた本文" })
       #expect(view.selectedRange() == caret(4))
       #expect(!view.document.canUndo)
+    }
+
+    @Test func 外側から差し替えた本文も装飾し打鍵で装飾が変わる() async throws {
+      let (_, view, state) = makeEditor(text: "# 見出し")
+      let text = "本文と**太字**\n``\n# 見出し\n> 引用"
+      state.text = text
+      #expect(await waitUntil { view.text == text })
+      expectHighlighted(view, state)
+      view.select([caret((text as NSString).range(of: "``").location + 2)], primary: 0)
+      view.insertText("`", replacementRange: caret(NSNotFound))
+      expectHighlighted(view, state)
     }
 
     @Test func エディタへの入力が状態に伝わる() {

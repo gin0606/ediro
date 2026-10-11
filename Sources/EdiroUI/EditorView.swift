@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import EdiroCore
 import EditorEngine
+import EditorMarkdown
 
 /// 本文を表示して入力を受け取るビュー。
 ///
@@ -15,8 +16,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   private var observation: Subscription?
 
   /// 本文か変換の状態が変わった直後、描画の前に呼ばれる。装飾の付け直しと状態への
-  /// 反映に使う。
-  var didChangeText: (() -> Void)?
+  /// 反映に使う。引数は、エンジンが Markdown のトークンを作り直した行。
+  var didChangeText: ((_ retokenizedLines: IndexSet) -> Void)?
 
   let inset = NSSize(width: 8, height: 8)
   var backgroundColor: NSColor = .textBackgroundColor { didSet { needsDisplay = true } }
@@ -55,11 +56,16 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   var translationAnchor: NSView?
 
   init(text: String) {
-    document = Document(id: "draft", text: text)
+    document = Self.makeDocument(text)
     session = try! EditorSession(document: document)
     super.init(frame: .zero)
     layout.replaceAll(with: document.snapshot.text)
     attach()
+  }
+
+  /// 本文を持つ Document。Markdown の行トークンはエンジンが編集のたびに作り直す。
+  private static func makeDocument(_ text: String) -> Document {
+    Document(id: "draft", text: text, lineTokenizer: MarkdownTokenizer())
   }
 
   @available(*, unavailable)
@@ -75,12 +81,12 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     lastKillAppending = nil
     marks = []
     try? document.dispose()
-    document = Document(id: "draft", text: text)
+    document = Self.makeDocument(text)
     session = try! EditorSession(document: document)
     layout.replaceAll(with: document.snapshot.text)
     textVersion += 1
     attach()
-    textDidChange()
+    textDidChange(IndexSet(integersIn: 0..<document.snapshot.lineCount))
   }
 
   private func attach() {
@@ -95,7 +101,9 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     for batch in event.batches { layout.apply(batch) }
     if event.changes.contains(.text) { textVersion += 1 }
     // 変換を確定しただけの通知は本文を変えないが、未確定だった文字が下書きに加わる。
-    if event.changes.contains(.text) || event.changes.contains(.composition) { textDidChange() }
+    if !event.changes.isDisjoint(with: [.text, .composition, .lineTokens]) {
+      textDidChange(event.retokenizedLines)
+    }
     if event.changes.contains(.text) || event.changes.contains(.selection) {
       needsDisplay = true
       updateCarets()
@@ -113,8 +121,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     body()
   }
 
-  private func textDidChange() {
-    didChangeText?()
+  private func textDidChange(_ retokenizedLines: IndexSet) {
+    didChangeText?(retokenizedLines)
     refreshLayout()
   }
 
