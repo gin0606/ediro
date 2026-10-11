@@ -282,6 +282,29 @@ extension AppKitTests {
       .init("ab", 0, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
       .init("a\nb", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
       .init("ae\u{301}b", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
+      // 単語の変換。選択を単語の境界まで広げて変換し、変換した範囲を選ぶ。
+      .init("hello world foo", 2, 0, "uppercaseWord:"),
+      .init("hello world foo", 5, 0, "uppercaseWord:"),
+      .init("hello world foo", 6, 0, "uppercaseWord:"),
+      .init("hello  world foo", 6, 0, "uppercaseWord:"),
+      .init("hello world foo", 15, 0, "uppercaseWord:"),
+      .init("hello world foo", 0, 0, "uppercaseWord:"),
+      .init("hello world foo", 2, 5, "uppercaseWord:"),
+      .init("hello world foo", 2, 5, "capitalizeWord:"),
+      .init("hello WORLD o'neil foo-bar 3rd ÉCOLE straße", 0, 42, "capitalizeWord:"),
+      .init("hello WORLD o'neil foo-bar 3rd ÉCOLE straße", 0, 42, "uppercaseWord:"),
+      .init("HELLO World", 0, 11, "lowercaseWord:"),
+      .init("hello WORLD", 8, 0, "capitalizeWord:"),
+      .init("hello WORLD", 8, 0, "lowercaseWord:"),
+      .init("a\nb", 0, 3, "uppercaseWord:"),
+      .init("", 0, 0, "uppercaseWord:"),
+      .init("abc 123 ｱｲｳ ﾃﾞｽ", 0, 14, "convertToFullWidth:"),
+      .init("ＡＢＣ　１２３ アイウ デス", 0, 14, "convertToHalfWidth:"),
+      .init("abc", 1, 0, "convertToFullWidth:"),
+      .init("abc def", 1, 4, "convertToFullWidth:"),
+      .init("漢字 汉字", 0, 5, "convertToSimplifiedChinese:"),
+      .init("漢字 汉字", 0, 5, "convertToTraditionalChinese:"),
+      .init("日本語の文章です", 0, 8, "convertToSimplifiedChinese:"),
     ]
 
     private func run(_ scenario: CommandScenario, on view: EditorView) {
@@ -332,11 +355,8 @@ extension AppKitTests {
       "toggleBaseWritingDirection:", "quickLookPreviewItems:", "toggleQuickLookPreviewPanel:",
     ]
 
-    /// 別の作業で実装するもの: 単語の変換は右クリックメニューの変換と、補完は他の入力支援と
-    /// 合わせて実装する。実装したらここから外す。
-    static let implementedElsewhere: Set<String> = [
-      "capitalizeWord:", "lowercaseWord:", "uppercaseWord:", "complete:",
-    ]
+    /// 別の作業で実装するもの: 補完は他の入力支援と合わせて実装する。実装したらここから外す。
+    static let implementedElsewhere: Set<String> = ["complete:"]
 
     /// その型が自分で実装しているか。NSView から継承しただけの応答は数えない。
     private func implements(_ type: AnyClass, _ selector: Selector) -> Bool {

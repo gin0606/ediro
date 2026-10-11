@@ -19,6 +19,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     self.state = state
     self.windowController = controller
 
+    // エディタが選択の文字列をサービスへ送り、結果を受け取れるようにする。
+    NSApp.registerServicesMenuSendTypes(
+      EditorView.serviceTypes, returnTypes: EditorView.serviceTypes)
     let menu = AppMenu.build(target: self)
     NSApp.mainMenu = menu.bar
     // ウィンドウ一覧の管理を macOS に任せる

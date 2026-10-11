@@ -51,8 +51,10 @@ final class ReferenceTextView {
 
   /// 本文の `location` の文字の上で右クリックしたときの、ウィンドウ座標のイベント。
   func rightMouseDown(at location: Int) -> NSEvent? {
-    let screenRect = textView.firstRect(
-      forCharacterRange: NSRange(location: location, length: 1), actualRange: nil)
+    // 複数の符号単位からなる文字は、文字全体の矩形で押す。
+    guard location < (textView.string as NSString).length else { return nil }
+    let character = (textView.string as NSString).rangeOfComposedCharacterSequence(at: location)
+    let screenRect = textView.firstRect(forCharacterRange: character, actualRange: nil)
     // 配置されていない位置では空の矩形が返り、別の場所をクリックしたことになる。
     guard !screenRect.isEmpty else { return nil }
     let point = window.convertPoint(fromScreen: NSPoint(x: screenRect.midX, y: screenRect.midY))

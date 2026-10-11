@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import EdiroCore
 import EditorEngine
@@ -41,6 +42,18 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// 位置を動かさない。
   private var marks: [NSRange] = []
 
+  /// 本文が変わるたびに増える。訳文で置き換える前に、本文が変わっていないかを確かめる。
+  private(set) var textVersion = 0
+  /// 右クリックメニューに、ほかの機能が足す項目。
+  var contextMenuAdditions: [ContextMenuAddition] = []
+  /// 右クリックメニューの「共有」が使う。メニュー項目は宛先を弱く持つので、ここで持ち続ける。
+  var sharingPicker: NSSharingServicePicker?
+  /// 読み上げ中の音声。読み上げを始めるまで作らない。
+  var speechSynthesizer: AVSpeechSynthesizer?
+  /// 翻訳のポップオーバーに渡す内容と、それを本文の上に出す透明なビュー。
+  var translation = TranslationRequest()
+  var translationAnchor: NSView?
+
   init(text: String) {
     document = Document(id: "draft", text: text)
     session = try! EditorSession(document: document)
@@ -65,6 +78,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     document = Document(id: "draft", text: text)
     session = try! EditorSession(document: document)
     layout.replaceAll(with: document.snapshot.text)
+    textVersion += 1
     attach()
     textDidChange()
   }
@@ -79,13 +93,24 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       lastKillAppending = nil
     }
     for batch in event.batches { layout.apply(batch) }
+    if event.changes.contains(.text) { textVersion += 1 }
     // 変換を確定しただけの通知は本文を変えないが、未確定だった文字が下書きに加わる。
     if event.changes.contains(.text) || event.changes.contains(.composition) { textDidChange() }
     if event.changes.contains(.text) || event.changes.contains(.selection) {
       needsDisplay = true
       updateCarets()
-      scrollToPrimary()
+      if scrollsToSelection { scrollToPrimary() }
     }
+  }
+
+  private var scrollsToSelection = true
+
+  /// 選択を変えても、表示を主の選択まで送らない。
+  func withoutScrolling(_ body: () -> Void) {
+    let scrolls = scrollsToSelection
+    scrollsToSelection = false
+    defer { scrollsToSelection = scrolls }
+    body()
   }
 
   private func textDidChange() {
@@ -124,7 +149,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     TextRange(position(of: range.location), position(of: NSMaxRange(range)))
   }
 
-  private func containerPoint(_ event: NSEvent) -> CGPoint {
+  func containerPoint(_ event: NSEvent) -> CGPoint {
     let point = convert(event.locationInWindow, from: nil)
     return CGPoint(x: point.x - textOrigin.x, y: point.y - textOrigin.y)
   }
@@ -267,7 +292,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   /// エンジンが断った操作は警告音で知らせる。変換中の移動などは、ここで断られる。
   @discardableResult
-  private func perform(_ operation: () throws -> Void) -> Bool {
+  func perform(_ operation: () throws -> Void) -> Bool {
     do {
       try operation()
       return true
@@ -580,7 +605,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   //
   // どれも選択ごとに適用する。単一の選択での結果は、参照 NSTextView と同じにする。
 
-  private struct Replacement {
+  struct Replacement {
     let range: NSRange
     let text: String
     let length: Int
@@ -594,7 +619,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   /// 重ならない置き換えを位置の順に当てた後の本文での、`offset` の位置。置き換えた範囲の
   /// 中の位置は、入れた文字の後ろに移る。
-  private func offset(_ offset: Int, after replacements: [Replacement]) -> Int {
+  func offset(_ offset: Int, after replacements: [Replacement]) -> Int {
     var delta = 0
     for replacement in replacements {
       if NSMaxRange(replacement.range) <= offset {
@@ -611,7 +636,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// 重ならない置き換えを位置の順に当て、選択を `selecting` に置く。一回の取り消しで、本文と
   /// 選択を元に戻す。
   @discardableResult
-  private func replace(
+  func replace(
     _ replacements: [Replacement], selecting: [(anchor: Int, head: Int)],
     historyGroup: String? = nil
   ) -> Bool {
@@ -823,21 +848,24 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// キャレットのある単語を選ぶ。キャレットは直前の文字に属するものとして扱い、行頭では
   /// 直後の文字に属する。範囲を選んでいるときは、両端をそれぞれ単語の境界まで広げる。
   override func selectWord(_ sender: Any?) {
+    select(
+      session.selections.map { wordRange(around: nsRange(of: $0.range)) },
+      primary: session.primaryIndex)
+  }
+
+  /// `selectWord:` が選ぶ範囲。単語の変換も同じ範囲に掛ける。
+  func wordRange(around range: NSRange) -> NSRange {
     let storage = layout.storage
     let string = storage.mutableString
-    let ranges = session.selections.map { selection -> NSRange in
-      let range = nsRange(of: selection.range)
-      if range.length > 0 {
-        return NSUnionRange(
-          storage.doubleClick(at: range.location), storage.doubleClick(at: NSMaxRange(range) - 1))
-      }
-      let caret = range.location
-      guard caret > 0 else { return caret < string.length ? storage.doubleClick(at: 0) : range }
-      // 文書の末尾では、直前が改行でも直前の文字に属する (NSTextView と同じ)。
-      return storage.doubleClick(
-        at: caret == string.length || !string.isLineBreak(at: caret - 1) ? caret - 1 : caret)
+    if range.length > 0 {
+      return NSUnionRange(
+        storage.doubleClick(at: range.location), storage.doubleClick(at: NSMaxRange(range) - 1))
     }
-    select(ranges, primary: session.primaryIndex)
+    let caret = range.location
+    guard caret > 0 else { return caret < string.length ? storage.doubleClick(at: 0) : range }
+    // 文書の末尾では、直前が改行でも直前の文字に属する (NSTextView と同じ)。
+    return storage.doubleClick(
+      at: caret == string.length || !string.isLineBreak(at: caret - 1) ? caret - 1 : caret)
   }
 
   /// 選択の先頭がある表示上の行を選ぶ。段落の最後の行なら、段落を区切る文字も含める。
@@ -913,7 +941,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   @objc func undo(_ sender: Any?) { perform { try document.undo() } }
   @objc func redo(_ sender: Any?) { perform { try document.redo() } }
 
-  private var selectedTexts: [String] {
+  var selectedTexts: [String] {
     let snapshot = document.snapshot
     return session.selections.filter { !$0.isEmpty }.compactMap {
       try? snapshot.text(in: $0.range)
@@ -947,9 +975,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// 行数とキャレットの数が揃っていれば、一行ずつ各キャレットに配る。
   func paste(from pasteboard: NSPasteboard) {
     guard let pasted = pasteboard.string(forType: .string) else { return }
-    // Swift の文字列では CRLF が一文字なので、揃えてから行に分ける。
-    let string = pasted.replacingOccurrences(of: "\r\n", with: "\n")
-      .replacingOccurrences(of: "\r", with: "\n")
+    let string = Self.normalizingLineEndings(pasted)
     let count = session.selections.count
     let lines = string.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     perform {
@@ -961,6 +987,11 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     }
   }
 
+  /// 改行を LF に揃える。Swift の文字列では CRLF が一文字なので、揃えてから行に分ける。
+  static func normalizingLineEndings(_ text: String) -> String {
+    text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+  }
+
   func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
     switch item.action {
     case #selector(undo(_:)): return document.canUndo
@@ -968,7 +999,16 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     case #selector(copy(_:)): return !selectedTexts.isEmpty
     case #selector(cut(_:)), #selector(delete(_:)):
       return !hasMarkedText() && session.selections.contains { !$0.isEmpty }
-    case #selector(paste(_:)): return NSPasteboard.general.string(forType: .string) != nil
+    case #selector(paste(_:)), #selector(pasteAsPlainText(_:)):
+      return NSPasteboard.general.availableType(from: [.string]) != nil
+    case #selector(startSpeaking(_:)): return layout.storage.length > 0
+    // 変換中の文字は、確定するまで変換も調べるも翻訳もしない。
+    case #selector(uppercaseWord(_:)), #selector(lowercaseWord(_:)), #selector(capitalizeWord(_:)),
+      #selector(convertToFullWidth(_:)), #selector(convertToHalfWidth(_:)),
+      #selector(convertToTraditionalChinese(_:)), #selector(convertToSimplifiedChinese(_:)),
+      #selector(lookUpFromMenu(_:)), #selector(translateFromMenu(_:)):
+      return !hasMarkedText()
+    case #selector(stopSpeaking(_:)): return speechSynthesizer?.isSpeaking == true
     default: return true
     }
   }

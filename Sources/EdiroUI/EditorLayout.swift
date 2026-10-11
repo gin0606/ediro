@@ -119,6 +119,17 @@ final class EditorLayout {
     return frames
   }
 
+  /// オフセットの文字のベースラインの始点。座標はテキストコンテナのもの。
+  func baselineOrigin(at offset: Int) -> CGPoint {
+    let caret = caretRect(at: offset)
+    guard storage.length > 0, let location = location(min(offset, storage.length - 1)),
+      let fragment = layoutManager.textLayoutFragment(for: location),
+      let line = fragment.textLineFragment(for: location, isUpstreamAffinity: false)
+    else { return CGPoint(x: caret.minX, y: caret.maxY) }
+    let origin = fragment.layoutFragmentFrame.origin
+    return CGPoint(x: caret.minX, y: origin.y + line.typographicBounds.minY + line.glyphOrigin.y)
+  }
+
   // MARK: - 当たり判定とナビゲーション
 
   /// 点に最も近い文字の境界。行の外側なら、その行の端に寄せる。
@@ -130,6 +141,63 @@ final class EditorLayout {
       return point.y < 0 ? 0 : storage.length
     }
     return offset(location)
+  }
+
+  /// 点が掛かる文字のオフセット。点がその表示上の行の文字に掛からなければ、行の右側の点は
+  /// 行の最後の文字 (改行で終わる行なら改行) に、左側の点は行の最初の文字に、本文より上か下の
+  /// 点は最後の文字に掛かるものとする。ただし文書の最後の行の右側と、改行で終わる本文の後ろの
+  /// 空の行は、どの文字にも掛からない (いずれも NSTextView と同じ)。本文が空なら nil。
+  func characterIndex(at point: CGPoint) -> Int? {
+    let string = storage.mutableString
+    guard string.length > 0 else { return nil }
+    func contains(_ index: Int) -> Bool {
+      selectionRects(string.rangeOfComposedCharacterSequence(at: index)).contains {
+        $0.minX <= point.x && point.x < $0.maxX && $0.minY <= point.y && point.y < $0.maxY
+      }
+    }
+    // 点に最も近い境界の前後の文字。右から左に書く文字や折り返しでも、矩形で確かめる。
+    let boundary = offset(at: point)
+    for index in [boundary - 1, boundary] where 0 <= index && index < string.length {
+      if contains(index) { return string.rangeOfComposedCharacterSequence(at: index).location }
+    }
+    let lastCharacter = string.rangeOfComposedCharacterSequence(at: string.length - 1).location
+    guard let line = visualLine(at: point) else { return lastCharacter }
+    // 改行で終わる本文の後ろの空の行は、どの文字でもない。
+    if line.range.length == 0 { return nil }
+    if let found = (line.range.location..<NSMaxRange(line.range)).first(where: contains) {
+      return string.rangeOfComposedCharacterSequence(at: found).location
+    }
+    if point.x < line.frame.midX { return line.range.location }
+    let end = last(of: line.range)
+    // 改行などで終わらない最後の行の右側は、どの文字でもない。
+    let terminated = Self.lineBreaks.contains(string.character(at: NSMaxRange(line.range) - 1))
+    return NSMaxRange(line.range) == string.length && !terminated ? nil : end
+  }
+
+  private func last(of range: NSRange) -> Int {
+    storage.mutableString.rangeOfComposedCharacterSequence(at: NSMaxRange(range) - 1).location
+  }
+
+  /// 点の高さにある表示上の行と、その文字の範囲。範囲は行を終える改行を含む。点がどの行の
+  /// 高さにも無ければ nil。
+  private func visualLine(at point: CGPoint) -> (range: NSRange, frame: CGRect)? {
+    var lines: [(range: NSRange, frame: CGRect)] = []
+    layoutManager.enumerateTextLayoutFragments(
+      from: layoutManager.documentRange.location,
+      options: [.ensuresLayout, .ensuresExtraLineFragment]
+    ) { fragment in
+      let origin = fragment.layoutFragmentFrame.origin
+      let base = self.offset(fragment.rangeInElement.location)
+      for line in fragment.textLineFragments {
+        lines.append(
+          (
+            NSRange(location: base + line.characterRange.location, length: line.characterRange.length),
+            line.typographicBounds.offsetBy(dx: origin.x, dy: origin.y)
+          ))
+      }
+      return true
+    }
+    return lines.first { $0.frame.minY <= point.y && point.y < $0.frame.maxY }
   }
 
   /// 単語や行の境界までの移動先。見つからなければ nil。
