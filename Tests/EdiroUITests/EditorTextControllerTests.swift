@@ -322,7 +322,7 @@ extension AppKitTests {
       }
     }
 
-    @Test func 行の端で行の端まで消すと改行だけを消す() {
+    @Test func 行末で行末まで消すと改行だけを消し行頭で行頭まで消すと何もしない() {
       let text = "abc def\nghi jkl\nmno"
       let (_, forward, _) = makeEditor(text: text)
       forward.select([caret(7)], primary: 0)
@@ -334,10 +334,11 @@ extension AppKitTests {
       let (_, backward, _) = makeEditor(text: text)
       backward.select([caret(8)], primary: 0)
       backward.deleteToBeginningOfLine(nil)
-      #expect(backward.text == "abc defghi jkl\nmno")
+      backward.deleteToBeginningOfParagraph(nil)
+      #expect(backward.text == text)
       backward.select([caret(10)], primary: 0)
       backward.deleteToBeginningOfParagraph(nil)
-      #expect(backward.text == " jkl\nmno")
+      #expect(backward.text == "abc def\ni jkl\nmno")
     }
 
     @Test func 置換範囲が本文の外にはみ出すキャレットは広げずに打つ() {

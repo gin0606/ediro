@@ -148,11 +148,23 @@ final class EditorLayout {
     return self.offset(target)
   }
 
-  /// オフセットを含む表示上の行の範囲。行末の改行は含めない。折り返し位置のオフセットは
-  /// キャレットが描かれる次の行に属する。
+  /// オフセットを含む表示上の行の範囲。行末の改行や改ページなどの区切りの文字は含めない。
+  /// 折り返し位置のオフセットは、キャレットが描かれる次の行に属する。
+  ///
+  /// 例外として、段落の末尾で改ページなどの直後にあるオフセットは、NSTextView と同じく
+  /// その文字で終わる行に属し、行はその文字まで含む。
   func lineRange(containing offset: Int) -> NSRange {
     let paragraph = paragraphRange(containing: offset)
-    guard let location = location(offset),
+    let string = storage.mutableString
+    if offset == NSMaxRange(paragraph), offset > paragraph.location,
+      Self.lineSeparators.contains(string.character(at: offset - 1))
+    {
+      let previous = lineRange(containing: offset - 1)
+      return NSRange(location: previous.location, length: offset - previous.location)
+    }
+    // 文書の末尾には配置が無いので、最後の文字の配置から探す。
+    let lookup = offset == string.length && offset > 0 ? offset - 1 : offset
+    guard let location = location(lookup),
       let fragment = layoutManager.textLayoutFragment(for: location)
     else { return paragraph }
     let base = self.offset(fragment.rangeInElement.location)
@@ -163,15 +175,33 @@ final class EditorLayout {
       let line = lines.first(where: { $0.location <= offset && offset < NSMaxRange($0) })
         ?? lines.last(where: { $0.location <= offset })
     else { return paragraph }
-    return NSIntersectionRange(line, paragraph).location == NSNotFound
-      ? paragraph : NSIntersectionRange(line, paragraph)
+    let start = max(line.location, paragraph.location)
+    var end = min(NSMaxRange(line), NSMaxRange(paragraph))
+    guard start <= end else { return paragraph }
+    while end > start, endsLine(at: end - 1) { end -= 1 }
+    return NSRange(location: start, length: end - start)
   }
 
-  /// オフセットを含む段落 (改行で区切った行) の範囲。行末の改行は含めない。
+  /// 段落を区切らずに行だけを終える文字。
+  static let lineSeparators: Set<unichar> = [0x0C, 0x85, 0x2028]
+  /// 段落を区切る文字。
+  static let paragraphSeparators: Set<unichar> = [0x0A, 0x0D, 0x2029]
+  static let lineBreaks = lineSeparators.union(paragraphSeparators)
+
+  /// `index` の文字が、段落を区切らずに行だけを終えるか。文書の末尾の改ページは、
+  /// NSTextView と同じく行の一部として扱う。
+  func endsLine(at index: Int) -> Bool {
+    let string = storage.mutableString
+    let character = string.character(at: index)
+    return Self.lineSeparators.contains(character)
+      && !(character == 0x0C && index == string.length - 1)
+  }
+
+  /// オフセットを含む段落の範囲。段落は改行と U+2029 で区切り、区切りの文字は含めない。
   func paragraphRange(containing offset: Int) -> NSRange {
-    let string = storage.string as NSString
+    let string = storage.mutableString
     var start = 0, contentsEnd = 0
-    string.getLineStart(
+    string.getParagraphStart(
       &start, end: nil, contentsEnd: &contentsEnd, for: NSRange(location: offset, length: 0))
     return NSRange(location: start, length: contentsEnd - start)
   }

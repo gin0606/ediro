@@ -221,6 +221,29 @@ import Foundation
         try e.move(.up)
         #expect(layout.received == [nil,nil])
     }
+    @Test func replacePlacesTheGivenSelectionsAndHistoryRestoresThem() throws {
+        let d = Document(id:"replace",text:"abcd\naaaa")
+        let e = try EditorSession(document:d)
+        try e.setSelections([Selection(Position(0,1)),Selection(Position(0,3)),Selection(Position(1,1))],primary:2)
+        // Touching edits merge into one change, and the last one changes nothing.
+        try e.replace([TextEdit(TextRange(Position(0,0),Position(0,2)),"ba"),TextEdit(TextRange(Position(0,2),Position(0,4)),"dc"),
+            TextEdit(TextRange(Position(1,0),Position(1,2)),"aa")],selecting:[(2,2),(4,4),(7,7)])
+        #expect(d.snapshot.text == "badc\naaaa")
+        #expect(e.selections.map(\.head) == [Position(0,2),Position(0,4),Position(1,2)]); #expect(e.primaryIndex == 2)
+        try d.undo(); #expect(d.snapshot.text == "abcd\naaaa")
+        #expect(e.selections.map(\.head) == [Position(0,1),Position(0,3),Position(1,1)])
+        try d.redo(); #expect(e.selections.map(\.head) == [Position(0,2),Position(0,4),Position(1,2)]); #expect(e.primaryIndex == 2)
+        // Edits that change nothing still place the selections.
+        try e.replace([TextEdit(TextRange(Position(1,0),Position(1,2)),"aa")],selecting:[(1,0),(4,4),(9,9)])
+        #expect(e.selections == [Selection(anchor:Position(0,1),head:Position(0,0)),Selection(Position(0,4)),Selection(Position(1,4))])
+        #expect(throws: EditorError.invalidRange) { try e.replace([],selecting:[(0,0)]) }
+        try e.beginComposition(); try e.updateComposition("x")
+        let composed = d.snapshot.text, selections = e.selections
+        #expect(throws: EditorError.compositionActive) {
+            try e.replace([TextEdit(TextRange(Position(0,0),Position(0,1)),"")],selecting:[(0,0),(3,3),(8,8)])
+        }
+        #expect(d.snapshot.text == composed); #expect(e.selections == selections); try e.cancelComposition()
+    }
     @Test func layoutFailureRestoresMutationAccess() throws {
         enum Failure: Error { case layout }
         struct Layout: LayoutAdapter {

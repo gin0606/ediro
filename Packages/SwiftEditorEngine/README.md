@@ -88,6 +88,9 @@ and scrolling should follow `primarySelection`.
 `type(_:)` inserts the same text at every selection; `type(_ texts:)` inserts `texts[i]`
 at `selections[i]`, for input that differs per caret such as a newline with each line's
 indentation or one line of a pasted block per caret. Each caret ends after its own text.
+`replace(_:selecting:historyGroup:)` applies arbitrary edits as one undo step and places
+each selection at offsets the caller computes for the edited text, for commands such as
+swapping the characters around each caret.
 For movements the application's layout defines, such as by word or to a visual line
 boundary, `move(extendingSelection:to:)` moves each selection's head to the position a
 closure returns for it, and `delete(to:historyGroup:)` deletes from each caret to such a

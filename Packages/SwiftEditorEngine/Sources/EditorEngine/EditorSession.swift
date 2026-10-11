@@ -146,6 +146,21 @@ func replacedStarts(_ ranges: [Range<Int>], lengths: [Int]) -> [Int] {
             ends.map { Selection(document.safePosition($0, affinity: .after)) }
         }, provisional: false)
     }
+    /// Applies `edits` as one change and replaces `selections[i]` with `selecting[i]`, given as
+    /// UTF-16 offsets in the edited text, for commands that place each caret themselves, such
+    /// as swapping the characters around it. Undo restores the selections from before the
+    /// change and redo restores these. Inserted text is normalized to the document's line
+    /// ending, so compute the offsets for the normalized text. As with `type(_:)`, edits that
+    /// change nothing only move the selections and add no undo step, and an offset outside the
+    /// text or inside a surrogate pair moves to the nearest valid position.
+    public func replace(_ edits: [TextEdit], selecting: [(anchor: Int, head: Int)], historyGroup: String? = nil) throws {
+        try ensureMutable(); if document.compositionOwner != nil { throw EditorError.compositionActive }
+        guard selecting.count == selections.count else { throw EditorError.invalidRange }
+        try document.perform(edits, expectedVersion: nil, group: historyGroup, owner: id, selectionsAfter: { [document] _ in
+            selecting.map { Selection(anchor: document.safePosition($0.anchor, affinity: .after),
+                head: document.safePosition($0.head, affinity: .after)) }
+        }, provisional: false)
+    }
     func graphemeOffset(_ offset: Int, forward: Bool) throws -> Int {
         let snapshot = document.snapshot
         let position = try snapshot.position(at: offset)

@@ -28,6 +28,19 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// Option を押しながらのドラッグでは、それまでの選択を残したまま一つ足す。
   private var dragKept: [Selection] = []
 
+  /// 行や段落の端まで消した文字 (kill buffer)。`yank:` で貼る。消した後のキャレットごとに一つ持つ。
+  private var killBuffer: [String] = []
+  /// 最後に kill buffer に入れた消去の、繋ぐ向き。次の消去も同じ向きなら、続けて消したものと
+  /// して前に消した文字に繋ぐ。間に文字を消すだけのコマンド (`keepingKill` の中の編集) は
+  /// 挟んでよいが、ほかの編集や取り消し、選択を置く操作を挟むと続かない。選択を置く操作は、
+  /// 選択が変わらなくても続かなくする。NSTextView に近づけた規則で、選択を動かしてから文字を
+  /// 消した後の kill など、NSTextView が続けて繋ぐ場合でも続かないことがある。
+  private var lastKillAppending: Bool?
+  private var keepsKill = false
+  /// `setMark:` で印を付けた範囲。選択ごとに一つ持つ。NSTextView と同じく、本文を編集しても
+  /// 位置を動かさない。
+  private var marks: [NSRange] = []
+
   init(text: String) {
     document = Document(id: "draft", text: text)
     session = try! EditorSession(document: document)
@@ -46,6 +59,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       inputContext?.discardMarkedText()
     }
     observation?.cancel()
+    lastKillAppending = nil
+    marks = []
     try? document.dispose()
     document = Document(id: "draft", text: text)
     session = try! EditorSession(document: document)
@@ -60,6 +75,9 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   private func handle(_ event: DocumentEvent) {
+    if !keepsKill, [.edit, .undo, .redo, .composition, .selection].contains(event.kind) {
+      lastKillAppending = nil
+    }
     for batch in event.batches { layout.apply(batch) }
     // 変換を確定しただけの通知は本文を変えないが、未確定だった文字が下書きに加わる。
     if event.changes.contains(.text) || event.changes.contains(.composition) { textDidChange() }
@@ -238,9 +256,25 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   // MARK: - エンジンへの操作
 
+  /// 続けて消している途中の kill を終わらせずに、文字を消すだけのコマンドを実行する。
+  @discardableResult
+  private func keepingKill<T>(_ body: () -> T) -> T {
+    let kept = keepsKill
+    keepsKill = true
+    defer { keepsKill = kept }
+    return body()
+  }
+
   /// エンジンが断った操作は警告音で知らせる。変換中の移動などは、ここで断られる。
-  private func perform(_ operation: () throws -> Void) {
-    do { try operation() } catch { NSSound.beep() }
+  @discardableResult
+  private func perform(_ operation: () throws -> Void) -> Bool {
+    do {
+      try operation()
+      return true
+    } catch {
+      NSSound.beep()
+      return false
+    }
   }
 
   /// 範囲を選択に変える。本文の外や文字の途中を指す範囲は受け付けない。
@@ -297,28 +331,36 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     _ direction: NSTextSelectionNavigation.Direction,
     to destination: NSTextSelectionNavigation.Destination
   ) {
-    perform {
-      try session.delete(
-        to: { position in
-          let from = offset(of: position)
-          return self.position(
-            of: layout.destination(from: from, direction: direction, destination: destination)
-              ?? from)
-        }, historyGroup: "deleting")
+    keepingKill {
+      perform {
+        try session.delete(
+          to: { position in
+            let from = offset(of: position)
+            return self.position(
+              of: layout.destination(from: from, direction: direction, destination: destination)
+                ?? from)
+          }, historyGroup: "deleting")
+      }
     }
   }
 
-  /// 行か段落の端まで消す。既に端にいるときは、隣の行と繋げる改行を消す。
+  /// 行か段落の端まで消し、消した文字を kill buffer に入れる。行末にいるときは、次の行と
+  /// 繋げる改行を消す。行頭にいるときは何もしない (NSTextView と同じ)。
+  ///
+  /// 続けて消した文字は、段落の末尾まで消したときだけ後ろに繋ぎ、ほかは前に繋ぐ。行の末尾まで
+  /// 消したときも前に繋ぐのは、参照 NSTextView がそうするため。
   private func deleteToBoundary(paragraph: Bool, end: Bool) {
-    perform {
-      try session.delete(
-        to: { position in
-          let from = offset(of: position)
-          var target = boundary(of: from, paragraph: paragraph, end: end)
-          if target == from { target = end ? min(from + 1, layout.storage.length) : max(from - 1, 0) }
-          return self.position(of: target)
-        }, historyGroup: "deleting")
+    func target(_ from: Int) -> Int {
+      let target = boundary(of: from, paragraph: paragraph, end: end)
+      return end && target == from ? min(from + 1, layout.storage.length) : target
     }
+    let ranges = session.selections.map { selection -> NSRange in
+      guard selection.isEmpty else { return nsRange(of: selection.range) }
+      let from = offset(of: selection.head)
+      let to = target(from)
+      return NSRange(location: min(from, to), length: abs(to - from))
+    }
+    kill(ranges, appending: paragraph && end)
   }
 
   func type(_ text: String) {
@@ -486,13 +528,27 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   override func deleteBackward(_ sender: Any?) {
-    perform { try session.deleteBackward(historyGroup: "deleting") }
+    keepingKill { perform { try session.deleteBackward(historyGroup: "deleting") } }
   }
   override func deleteForward(_ sender: Any?) {
-    perform { try session.deleteForward(historyGroup: "deleting") }
+    keepingKill { perform { try session.deleteForward(historyGroup: "deleting") } }
   }
+  /// 直前の文字を正準分解し、最後の符号点だけを消す。`é` は `e` に、`한` は `하` になる。
+  /// 分解しても符号点が一つなら、文字ごと消す。結果は合成し直さない (NSTextView と同じ)。
   override func deleteBackwardByDecomposingPreviousCharacter(_ sender: Any?) {
-    deleteBackward(sender)
+    let string = layout.storage.mutableString
+    keepingKill {
+      replaceEach(historyGroup: "deleting") { _, range in
+        guard range.length == 0 else { return (range, "") }
+        // 合成文字の途中のキャレットは、その文字の前にあるものとして扱う。
+        let caret = string.characterStart(at: range.location)
+        guard caret > 0 else { return nil }
+        let previous = string.rangeOfComposedCharacterSequence(at: caret - 1)
+        let scalars = string.substring(with: previous).decomposedStringWithCanonicalMapping
+          .unicodeScalars
+        return (previous, String(String.UnicodeScalarView(scalars.dropLast())))
+      }
+    }
   }
   override func deleteWordBackward(_ sender: Any?) { delete(.backward, to: .word) }
   override func deleteWordForward(_ sender: Any?) { delete(.forward, to: .word) }
@@ -518,6 +574,338 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   override func selectAll(_ sender: Any?) {
     select([NSRange(location: 0, length: layout.storage.length)], primary: 0)
+  }
+
+  // MARK: - 標準キーバインドの編集コマンド
+  //
+  // どれも選択ごとに適用する。単一の選択での結果は、参照 NSTextView と同じにする。
+
+  private struct Replacement {
+    let range: NSRange
+    let text: String
+    let length: Int
+
+    init(_ range: NSRange, _ text: String) {
+      self.range = range
+      self.text = text
+      length = (text as NSString).length
+    }
+  }
+
+  /// 重ならない置き換えを位置の順に当てた後の本文での、`offset` の位置。置き換えた範囲の
+  /// 中の位置は、入れた文字の後ろに移る。
+  private func offset(_ offset: Int, after replacements: [Replacement]) -> Int {
+    var delta = 0
+    for replacement in replacements {
+      if NSMaxRange(replacement.range) <= offset {
+        delta += replacement.length - replacement.range.length
+      } else if replacement.range.location < offset {
+        return replacement.range.location + delta + replacement.length
+      } else {
+        break
+      }
+    }
+    return offset + delta
+  }
+
+  /// 重ならない置き換えを位置の順に当て、選択を `selecting` に置く。一回の取り消しで、本文と
+  /// 選択を元に戻す。
+  @discardableResult
+  private func replace(
+    _ replacements: [Replacement], selecting: [(anchor: Int, head: Int)],
+    historyGroup: String? = nil
+  ) -> Bool {
+    perform {
+      try session.replace(
+        replacements.map { TextEdit(textRange(of: $0.range), $0.text) }, selecting: selecting,
+        historyGroup: historyGroup)
+    }
+  }
+
+  /// 選択ごとに、`edit` が選択の番号と範囲から返す範囲を文字列で置き換える。nil を返した
+  /// 選択と、前の範囲やほかの選択と重なる範囲は置き換えない。置き換えた選択は、入れた文字の
+  /// 後ろのキャレットになる。
+  private func replaceEach(
+    historyGroup: String? = nil, _ edit: (Int, NSRange) -> (range: NSRange, text: String)?
+  ) {
+    let edits = session.selections.indices.compactMap { index in
+      edit(index, nsRange(of: session.selections[index].range)).map {
+        (index: index, replacement: Replacement($0.range, $0.text))
+      }
+    }.sorted { $0.replacement.range.location < $1.replacement.range.location }
+    let selected = session.selections.map { nsRange(of: $0.range) }
+    var kept: [(index: Int, replacement: Replacement)] = []
+    for edit in edits {
+      let range = edit.replacement.range
+      guard range.length > 0 || edit.replacement.length > 0 else { continue }
+      if let last = kept.last?.replacement.range,
+        range.location < NSMaxRange(last) || range.location == last.location
+      {
+        continue
+      }
+      // ほかの選択に掛かる置き換えは、その選択を広げたり消したりしないよう行わない。
+      let overlaps = selected.indices.contains { other in
+        let range2 = selected[other]
+        return other != edit.index
+          && (NSIntersectionRange(range, range2).length > 0
+            || (range.location < range2.location && range2.location < NSMaxRange(range)))
+      }
+      if !overlaps { kept.append(edit) }
+    }
+    guard !kept.isEmpty else { return }
+    let replacements = kept.map(\.replacement)
+    let edited = Dictionary(uniqueKeysWithValues: kept.map { ($0.index, $0.replacement.range) })
+    let selections = session.selections.indices.map { index -> (anchor: Int, head: Int) in
+      if let range = edited[index] {
+        let caret = offset(NSMaxRange(range), after: replacements)
+        return (caret, caret)
+      }
+      let selection = session.selections[index]
+      return (
+        offset(offset(of: selection.anchor), after: replacements),
+        offset(offset(of: selection.head), after: replacements)
+      )
+    }
+    replace(replacements, selecting: selections, historyGroup: historyGroup)
+  }
+
+  /// キャレットの前後の文字を入れ替えて、キャレットを一つ進める。段落の末尾では、
+  /// キャレットの前の二文字を入れ替えて動かない。範囲を選んでいるときは何もしない。
+  override func transpose(_ sender: Any?) {
+    let string = layout.storage.mutableString
+    replaceEach { _, range in
+      guard range.length == 0 else { return nil }
+      let caret = string.characterStart(at: range.location)
+      guard caret > 0 else { return nil }
+      var first = string.rangeOfComposedCharacterSequence(at: caret - 1)
+      var second: NSRange
+      if caret < range.location {
+        // 合成文字の途中のキャレットは、その文字の前にあるものとして扱う。
+        second = string.rangeOfComposedCharacterSequence(at: caret)
+      } else if caret == string.length || string.isLineBreak(at: caret) {
+        // 段落の末尾では、キャレットの前の二文字を入れ替える。前の文字が複数の符号単位から
+        // なるときは何もしない (NSTextView と同じ)。
+        second = first
+        guard second.length == 1, second.location > 0 else { return nil }
+        first = string.rangeOfComposedCharacterSequence(at: second.location - 1)
+      } else {
+        second = string.rangeOfComposedCharacterSequence(at: caret)
+      }
+      return (
+        NSRange(location: first.location, length: NSMaxRange(second) - first.location),
+        string.substring(with: second) + string.substring(with: first)
+      )
+    }
+  }
+
+  /// 選択ごとに `ranges` の範囲を消して kill buffer に入れ、各キャレットを消した位置に置く。
+  /// kill buffer には、消した後のキャレットごとに、そこで消えた文字を一つ入れる。消した後に
+  /// 一つにまとまるキャレットの分は、本文の順に繋いだ一つになる。続けて同じ向きに繋ぐ消し方を
+  /// したときは、前に消した文字の後ろ (`appending`) か前に繋ぐ。何も消さなければ false。
+  @discardableResult
+  private func kill(_ ranges: [NSRange], appending: Bool) -> Bool {
+    // 重なる範囲や接する範囲は、一つの範囲として消す。
+    var merged: [NSRange] = []
+    for range in ranges.filter({ $0.length > 0 }).sorted(by: { $0.location < $1.location }) {
+      if let last = merged.last, range.location <= NSMaxRange(last) {
+        merged[merged.count - 1] = NSUnionRange(last, range)
+      } else {
+        merged.append(range)
+      }
+    }
+    guard !merged.isEmpty else { return false }
+    let replacements = merged.map { Replacement($0, "") }
+    let carets = ranges.map { offset($0.location, after: replacements) }
+    // 重なる部分は先に始まる範囲の分として、選択ごとに消える文字を求める。
+    let string = layout.storage.mutableString
+    let order = ranges.indices.sorted { (ranges[$0].location, $0) < (ranges[$1].location, $1) }
+    var pieces = Array(repeating: "", count: ranges.count)
+    var end = 0
+    for index in order {
+      let range = ranges[index]
+      let start = max(range.location, end)
+      end = max(end, NSMaxRange(range))
+      if start < NSMaxRange(range) {
+        pieces[index] = string.substring(
+          with: NSRange(location: start, length: NSMaxRange(range) - start))
+      }
+    }
+    let continuing = lastKillAppending == appending
+    let previous = killBuffer
+    if continuing, previous.count == ranges.count {
+      pieces = zip(previous, pieces).map { appending ? $0 + $1 : $1 + $0 }
+    }
+    // NSTextView と同じく、消すごとに一回の取り消しで戻る。
+    guard keepingKill({ replace(replacements, selecting: carets.map { ($0, $0) }) }) else {
+      return false
+    }
+    killBuffer = Set(carets).sorted().map { caret in
+      order.filter { carets[$0] == caret }.map { pieces[$0] }.joined()
+    }
+    // 間の消去でキャレットがまとまり、前に消した文字とキャレットの対応が分からないときは、
+    // まとめて一つに繋ぐ。
+    if continuing, previous.count != ranges.count {
+      let earlier = previous.joined()
+      let text = killBuffer.joined()
+      killBuffer = [appending ? earlier + text : text + earlier]
+    }
+    lastKillAppending = appending
+    return true
+  }
+
+  /// kill buffer の文字を選択の位置に入れる。消したときと選択の数が揃っていれば、一つずつ
+  /// 各選択に配り、何も消さなかった分の選択はそのままにする。揃わなければ、改行で繋いで
+  /// 各選択に入れる。
+  override func yank(_ sender: Any?) {
+    let killed = killBuffer.filter { !$0.isEmpty }
+    guard !killed.isEmpty else { return NSSound.beep() }
+    let texts =
+      killBuffer.count == session.selections.count
+      ? killBuffer
+      : Array(repeating: killed.joined(separator: "\n"), count: session.selections.count)
+    replaceEach { index, range in texts[index].isEmpty ? nil : (range, texts[index]) }
+  }
+
+  override func setMark(_ sender: Any?) {
+    marks = session.selections.map { nsRange(of: $0.range) }
+  }
+
+  /// 選択と、同じ順番の印の組。本文が縮んで外にはみ出した印は本文の末尾に寄せ、文字の
+  /// 途中を指す端はその文字の前に寄せる。印が無ければ nil。選択と印の数が違えば、警告音を
+  /// 鳴らして nil を返す。
+  private func markPairs() -> [(selection: NSRange, mark: NSRange)]? {
+    guard !marks.isEmpty else { return nil }
+    guard marks.count == session.selections.count else {
+      NSSound.beep()
+      return nil
+    }
+    let string = layout.storage.mutableString
+    return zip(session.selections, marks).map { selection, mark in
+      let start = string.characterStart(at: min(mark.location, string.length))
+      let end = string.characterStart(at: min(NSMaxRange(mark), string.length))
+      return (nsRange(of: selection.range), NSRange(location: start, length: max(end - start, 0)))
+    }
+  }
+
+  /// 印と選択を合わせた範囲を選ぶ。
+  override func selectToMark(_ sender: Any?) {
+    guard let pairs = markPairs() else { return }
+    select(pairs.map { NSUnionRange($0.selection, $0.mark) }, primary: session.primaryIndex)
+  }
+
+  /// 印の範囲を選び、それまでの選択に印を付け替える。
+  override func swapWithMark(_ sender: Any?) {
+    guard let pairs = markPairs() else { return }
+    let primary = session.primaryIndex
+    guard
+      perform({ try session.setSelections(pairs.map { try selection($0.mark) }, primary: primary) })
+    else { return }
+    // 印の範囲が重なって選択が一つにまとまったときは、どの選択に付け替えるか決まらないので
+    // 印を消す。
+    marks = session.selections.count == pairs.count ? pairs.map(\.selection) : []
+  }
+
+  /// 印と選択を合わせた範囲を消して kill buffer に入れ、消した位置に印を付け直す。印が
+  /// 無ければ選択を消す。NSTextView と同じく、続けて消したときは前に消した文字の前に繋ぐ。
+  override func deleteToMark(_ sender: Any?) {
+    let ranges: [NSRange]
+    if marks.isEmpty {
+      ranges = session.selections.map { nsRange(of: $0.range) }
+    } else {
+      guard let pairs = markPairs() else { return }
+      ranges = pairs.map { NSUnionRange($0.selection, $0.mark) }
+    }
+    if kill(ranges, appending: false) {
+      marks = session.selections.map { NSRange(location: offset(of: $0.head), length: 0) }
+    }
+  }
+
+  /// キャレットのある単語を選ぶ。キャレットは直前の文字に属するものとして扱い、行頭では
+  /// 直後の文字に属する。範囲を選んでいるときは、両端をそれぞれ単語の境界まで広げる。
+  override func selectWord(_ sender: Any?) {
+    let storage = layout.storage
+    let string = storage.mutableString
+    let ranges = session.selections.map { selection -> NSRange in
+      let range = nsRange(of: selection.range)
+      if range.length > 0 {
+        return NSUnionRange(
+          storage.doubleClick(at: range.location), storage.doubleClick(at: NSMaxRange(range) - 1))
+      }
+      let caret = range.location
+      guard caret > 0 else { return caret < string.length ? storage.doubleClick(at: 0) : range }
+      // 文書の末尾では、直前が改行でも直前の文字に属する (NSTextView と同じ)。
+      return storage.doubleClick(
+        at: caret == string.length || !string.isLineBreak(at: caret - 1) ? caret - 1 : caret)
+    }
+    select(ranges, primary: session.primaryIndex)
+  }
+
+  /// 選択の先頭がある表示上の行を選ぶ。段落の最後の行なら、段落を区切る文字も含める。
+  /// 改ページなど、行だけを終える文字は含めない (文書の末尾の改ページを除く)。
+  override func selectLine(_ sender: Any?) {
+    let string = layout.storage.mutableString
+    let ranges = session.selections.map { selection -> NSRange in
+      var line = layout.lineRange(containing: offset(of: selection.range.start))
+      while line.length > 0, layout.endsLine(at: NSMaxRange(line) - 1) {
+        line.length -= 1
+      }
+      let end = NSMaxRange(line)
+      if line.length > 0, end < string.length,
+        EditorLayout.paragraphSeparators.contains(string.character(at: end))
+      {
+        line.length += 1
+      }
+      return line
+    }
+    select(ranges, primary: session.primaryIndex)
+  }
+
+  /// 選択に掛かる段落を、末尾の改行まで含めて選ぶ。
+  override func selectParagraph(_ sender: Any?) {
+    let string = layout.storage.mutableString
+    select(
+      session.selections.map { string.paragraphRange(for: nsRange(of: $0.range)) },
+      primary: session.primaryIndex)
+  }
+
+  /// 主の選択を表示領域の縦の中央に置く。表示領域より高い選択は、先頭を表示領域の上端に置く。
+  override func centerSelectionInVisibleArea(_ sender: Any?) {
+    let range = nsRange(of: session.primarySelection.range)
+    let rects =
+      range.length > 0 ? layout.selectionRects(range) : [layout.caretRect(at: range.location)]
+    guard let first = rects.first else { return }
+    let target = rects.dropFirst().reduce(first) { $0.union($1) }
+      .offsetBy(dx: textOrigin.x, dy: textOrigin.y)
+    let visible = visibleRect
+    let y = target.height > visible.height ? target.minY : target.midY - visible.height / 2
+    scroll(CGPoint(x: visible.minX, y: y))
+  }
+
+  /// 参照 NSTextView は、書体の大きさやスクロールビューの設定によらず 20pt ずつ送る。
+  private static let lineScrollDistance: CGFloat = 20
+
+  override func scrollLineUp(_ sender: Any?) { scrollLine(by: -Self.lineScrollDistance) }
+  override func scrollLineDown(_ sender: Any?) { scrollLine(by: Self.lineScrollDistance) }
+
+  private func scrollLine(by distance: CGFloat) {
+    let visible = visibleRect
+    scroll(CGPoint(x: visible.minX, y: visible.minY + distance))
+  }
+
+  /// 引用符の自動置換を通さずに入れる。置換はまだ無いので、打鍵と同じになる。
+  override func insertSingleQuoteIgnoringSubstitution(_ sender: Any?) { type("'") }
+  override func insertDoubleQuoteIgnoringSubstitution(_ sender: Any?) { type("\"") }
+
+  /// NSTextView と同じく改ページの文字 (U+000C) を入れる。
+  override func insertContainerBreak(_ sender: Any?) { type("\u{0C}") }
+
+  /// フィールドエディタではないので何もしない。NSTextView も本文の編集では何もしない。
+  override func insertBacktab(_ sender: Any?) {}
+
+  /// 選択した範囲を消す。kill buffer にもクリップボードにも入れない。
+  @objc func delete(_ sender: Any?) {
+    guard session.selections.contains(where: { !$0.isEmpty }) else { return }
+    keepingKill { perform { try session.type("") } }
   }
 
   // MARK: - 取り消しとクリップボード
@@ -578,7 +966,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     case #selector(undo(_:)): return document.canUndo
     case #selector(redo(_:)): return document.canRedo
     case #selector(copy(_:)): return !selectedTexts.isEmpty
-    case #selector(cut(_:)): return !hasMarkedText() && !selectedTexts.isEmpty
+    case #selector(cut(_:)), #selector(delete(_:)):
+      return !hasMarkedText() && session.selections.contains { !$0.isEmpty }
     case #selector(paste(_:)): return NSPasteboard.general.string(forType: .string) != nil
     default: return true
     }
@@ -805,4 +1194,17 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   override func isAccessibilityElement() -> Bool { true }
   override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
   override func accessibilityValue() -> Any? { text }
+}
+
+extension NSString {
+  /// `index` を含む文字の先頭。合成文字の途中を指す位置を、その文字の前に寄せる。
+  fileprivate func characterStart(at index: Int) -> Int {
+    index < length ? rangeOfComposedCharacterSequence(at: index).location : index
+  }
+
+  /// `index` の文字が行を終えるか。NSTextView の入れ替えと単語の選択は、改行のほかに
+  /// 改ページや U+2028 なども行の区切りとして扱う。
+  fileprivate func isLineBreak(at index: Int) -> Bool {
+    EditorLayout.lineBreaks.contains(character(at: index))
+  }
 }
