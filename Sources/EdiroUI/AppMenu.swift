@@ -1,7 +1,7 @@
 import AppKit
 
-/// アプリケーションメニュー。Edit メニューが無いと NSTextView の
-/// Cmd+C / Cmd+V / Cmd+Z が効かないため、標準項目も自前で並べる。
+/// アプリケーションメニュー。Edit メニューが無いと Cmd+C / Cmd+V / Cmd+Z が
+/// エディタに届かないため、標準項目も自前で並べる。
 enum AppMenu {
   /// メニューバーと、そのうち NSApp へ引き渡すものをまとめて返す。
   /// 受け取る側がタイトル文字列で引き直さずに済ませるため。
@@ -15,6 +15,7 @@ enum AppMenu {
     let window = windowMenu()
     main.addItem(submenu(appMenu(target: target)))
     main.addItem(submenu(editMenu()))
+    main.addItem(submenu(selectionMenu()))
     main.addItem(submenu(viewMenu(target: target)))
     main.addItem(submenu(textMenu(target: target)))
     main.addItem(submenu(window))
@@ -36,7 +37,7 @@ enum AppMenu {
 
   private static func editMenu() -> NSMenu {
     let menu = NSMenu(title: "Edit")
-    // 取り消し系は NSTextView が応答するので、セレクタ名で応答連鎖に流す。
+    // 取り消し系はエディタが応答するので、セレクタ名で応答連鎖に流す。
     menu.addItem(item("Undo", Selector(("undo:")), key: "z"))
     menu.addItem(item("Redo", Selector(("redo:")), key: "z", modifiers: [.command, .shift]))
     menu.addItem(.separator())
@@ -44,6 +45,22 @@ enum AppMenu {
     menu.addItem(item("Copy", #selector(NSText.copy(_:)), key: "c"))
     menu.addItem(item("Paste", #selector(NSText.paste(_:)), key: "v"))
     menu.addItem(item("Select All", #selector(NSText.selectAll(_:)), key: "a"))
+    return menu
+  }
+
+  /// 複数カーソルの操作。宛先はエディタで、応答連鎖に流す。
+  private static func selectionMenu() -> NSMenu {
+    let menu = NSMenu(title: "Selection")
+    menu.addItem(item("Add Next Occurrence", #selector(EditorView.addNextOccurrence(_:)), key: "d"))
+    menu.addItem(
+      item(
+        "Add Cursor Above", #selector(EditorView.addCursorAbove(_:)),
+        key: String(Character(UnicodeScalar(NSUpArrowFunctionKey)!)), modifiers: [.command, .option]))
+    menu.addItem(
+      item(
+        "Add Cursor Below", #selector(EditorView.addCursorBelow(_:)),
+        key: String(Character(UnicodeScalar(NSDownArrowFunctionKey)!)),
+        modifiers: [.command, .option]))
     return menu
   }
 

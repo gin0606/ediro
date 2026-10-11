@@ -19,7 +19,7 @@ extension AppKitTests {
           String(String(repeating: unit, count: size / unit.count + 1).prefix(size)) + "\n> 引用"
         let state = makeState(text: text)
         let controller = EditorTextController(state: state)
-        let storage = controller.textView.textStorage!
+        let storage = controller.editorView.layout.storage
         let attributer = MarkdownAttributer(theme: state.theme, preferences: state.preferences)
         var highlightTimes: [Double] = []
         for sample in 0..<110 {
@@ -30,7 +30,7 @@ extension AppKitTests {
         var latencyTimes: [Double] = []
         for _ in 0..<12 {
           let start = ContinuousClock.now
-          controller.textView.insertText(
+          controller.editorView.insertText(
             "a", replacementRange: NSRange(location: storage.length, length: 0))
           let expected = SyntaxPalette(theme: state.theme).style(for: .blockquote).color.nsColor
           let reached = await waitUntil(

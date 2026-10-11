@@ -4,6 +4,9 @@ import PackageDescription
 let package = Package(
   name: "Ediro",
   platforms: [.macOS(.v26)],
+  dependencies: [
+    .package(path: "Packages/SwiftEditorEngine")
+  ],
   targets: [
     .target(
       name: "EdiroCore",
@@ -11,7 +14,10 @@ let package = Package(
     ),
     .target(
       name: "EdiroUI",
-      dependencies: ["EdiroCore"],
+      dependencies: [
+        "EdiroCore",
+        .product(name: "EditorEngine", package: "SwiftEditorEngine"),
+      ],
       swiftSettings: [
         // UI 層はほぼ全てメインスレッド上で動くため、既定の隔離を MainActor にする。
         .defaultIsolation(MainActor.self),

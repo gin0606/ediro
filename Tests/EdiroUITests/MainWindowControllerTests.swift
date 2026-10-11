@@ -16,7 +16,7 @@ extension AppKitTests {
       let controller = MainWindowController(state: makeState())
       controller.show()
       // ビュー階層を探して当てるのではなく、持っている実体をそのまま指す
-      #expect(controller.window.firstResponder === controller.editor.textView)
+      #expect(controller.window.firstResponder === controller.editor.editorView)
     }
 
     @Test func 最前面固定がウィンドウのレベルに反映される() async {

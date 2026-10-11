@@ -15,7 +15,7 @@ extension AppKitTests {
 
     @Test func メニューバーに必要なメニューが並ぶ() {
       let titles = menuBar().items.compactMap { $0.submenu?.title }
-      #expect(titles == ["Ediro", "Edit", "View", "Text", "Window"])
+      #expect(titles == ["Ediro", "Edit", "Selection", "View", "Text", "Window"])
     }
 
     @Test func 編集メニューに取り消しと複製の標準項目がある() throws {

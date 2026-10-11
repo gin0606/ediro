@@ -50,7 +50,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
   func focusEditor() {
     // NSHostingView はレイアウトを通すまで内側のビューを窓に載せない。
     window.contentView?.layoutSubtreeIfNeeded()
-    window.makeFirstResponder(editor.textView)
+    window.makeFirstResponder(editor.editorView)
   }
 
   /// 閉じるはアプリを隠すだけにする。下書きが常駐している前提の使い方に合わせる。

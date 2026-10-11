@@ -4,243 +4,200 @@ import Testing
 
 @testable import EdiroUI
 
+/// 呼び出し側が受け取らなかったコントローラもテストの間は生かしておく。本文の変更を
+/// 状態へ流すのはコントローラなので、先に解放されると何も反映されない。
+private var retainedControllers: [EditorTextController] = []
+
 extension AppKitTests {
   struct EditorTextControllerTests {
-    @Test func 長文の下部を編集しても後続行の表示と選択位置を保つ() async throws {
-      let prefix = String(repeating: "# Heading\n本文と**太字**です。\n", count: 500)
-      let state = makeState(text: prefix + "編集する本文\n後続の本文\n最後の行")
+    /// 幅を持たせたエディタ。折り返しや上下移動はレイアウトの幅に依存する。
+    private func makeEditor(text: String = "", width: CGFloat = 400) -> (
+      EditorTextController, EditorView, AppState
+    ) {
+      let state = makeState(text: text)
       let controller = EditorTextController(state: state)
+      controller.scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 300)
+      controller.editorView.setFrameSize(controller.scrollView.contentSize)
+      retainedControllers.append(controller)
+      return (controller, controller.editorView, state)
+    }
+
+    private func caret(_ location: Int) -> NSRange { NSRange(location: location, length: 0) }
+
+    private func carets(_ view: EditorView) -> [NSRange] {
+      view.session.selections.map { view.nsRange(of: $0.range) }
+    }
+
+    private func expectHighlighted(_ view: EditorView, _ state: AppState) {
+      let expected = NSTextStorage(string: view.text)
+      MarkdownAttributer(theme: state.theme, preferences: state.preferences).apply(to: expected)
+      #expect(view.layout.storage.isEqual(to: expected))
+    }
+
+    @Test func 長文の下部を編集しても表示位置と選択位置を保つ() async throws {
+      let prefix = String(repeating: "# Heading\n本文と**太字**です。\n", count: 500)
+      let (controller, view, state) = makeEditor(text: prefix + "編集する本文\n後続の本文\n最後の行")
       let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
         styleMask: [.titled], backing: .buffered, defer: false)
       window.contentView = controller.scrollView
       defer { window.orderOut(nil) }
-      let textView = controller.textView
-      window.makeFirstResponder(textView)
+      window.makeFirstResponder(view)
       window.orderFront(nil)
-      window.displayIfNeeded()
       let location = (prefix as NSString).length
-      textView.setSelectedRange(NSRange(location: location, length: 0))
-      textView.scrollRangeToVisible(textView.selectedRange())
-      func followingLineIsVisible() -> Bool {
-        window.displayIfNeeded()
-        let following = (textView.string as NSString).range(of: "後続の本文")
-        let screenRect = textView.firstRect(forCharacterRange: following, actualRange: nil)
-        let rect = textView.convert(window.convertFromScreen(screenRect), from: nil)
-        return rect.height > 0 && rect.intersects(textView.visibleRect)
-      }
-      #expect(await waitUntil({ followingLineIsVisible() }, timeout: .seconds(2)))
+      view.select([caret(location)], primary: 0)
       try #require(controller.scrollView.contentView.bounds.minY > 0)
 
       for input in ["追記", "\n", "# "] {
-        textView.insertText(input, replacementRange: textView.selectedRange())
-        let selected = textView.selectedRange()
         let scrollOrigin = controller.scrollView.contentView.bounds.origin
-        controller.highlight()
-        #expect(await waitUntil({ followingLineIsVisible() }, timeout: .seconds(2)))
-
-        #expect(textView.selectedRange() == selected)
+        view.insertText(input, replacementRange: caret(NSNotFound))
         #expect(abs(controller.scrollView.contentView.bounds.minY - scrollOrigin.y) < 40)
-        #expect(state.text == textView.string)
+        #expect(state.text == view.text)
       }
-      #expect(textView.string == prefix + "追記\n# 編集する本文\n後続の本文\n最後の行")
-    }
-
-    @Test func 実行待ちの更新をまとめて次の打鍵も更新する() {
-      var pending: [@MainActor () -> Void] = []
-      let controller = EditorTextController(
-        state: makeState(text: "本文"), enqueueHighlight: { pending.append($0) })
-      pending.removeAll()
-      let view = controller.textView
-      let storage = view.textStorage!
-      view.insertText("# ", replacementRange: NSRange(location: 0, length: 0))
-      view.insertText("追記", replacementRange: NSRange(location: storage.length, length: 0))
-      #expect(pending.count == 1)
-      #expect(
-        (storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont)?.pointSize
-          == CGFloat(Preferences.default.fontSize))
-      pending.removeFirst()()
-      #expect(
-        (storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont)?.pointSize
-          ?? 0 > Preferences.default.fontSize)
-      view.insertText("次", replacementRange: NSRange(location: storage.length, length: 0))
-      #expect(pending.count == 1)
-      pending.removeFirst()()
-      let expected = NSTextStorage(string: view.string)
-      MarkdownAttributer(theme: .fallback, preferences: .default).apply(to: expected)
-      #expect(storage.isEqual(to: expected))
-    }
-
-    @Test func 直接ハイライトした後に残った古い予約は新しい予約を妨げない() {
-      var pending: [@MainActor () -> Void] = []
-      let controller = EditorTextController(
-        state: makeState(text: "本文"), enqueueHighlight: { pending.append($0) })
-      pending.removeAll()
-      let view = controller.textView
-      let storage = view.textStorage!
-      view.insertText("# ", replacementRange: NSRange(location: 0, length: 0))
-      controller.highlight()
-      view.insertText("\n# 次", replacementRange: NSRange(location: storage.length, length: 0))
-      #expect(pending.count == 2)
-      while !pending.isEmpty { pending.removeFirst()() }
-      let expected = NSTextStorage(string: view.string)
-      MarkdownAttributer(theme: .fallback, preferences: .default).apply(to: expected)
-      #expect(storage.isEqual(to: expected))
-    }
-
-    @Test func 本文を変えずに外観を変えた直後の入力も新しい設定で表示する() {
-      let state = makeState(text: "本文")
-      let controller = EditorTextController(state: state, enqueueHighlight: { _ in })
-      let view = controller.textView
-      view.setSelectedRange(NSRange(location: 2, length: 0))
-      state.preferences.fontSize = 24
-      state.preferences.themeID = "light"
-      controller.syncFromState()
-      view.insertText("a", replacementRange: NSRange(location: 2, length: 0))
-      let expected = NSTextStorage(string: view.string)
-      MarkdownAttributer(theme: state.theme, preferences: state.preferences).apply(to: expected)
-      let range = NSRange(location: 2, length: 1)
-      #expect(
-        view.textStorage!.attributedSubstring(from: range)
-          .isEqual(to: expected.attributedSubstring(from: range)))
+      #expect(view.selectedRange() == caret(location + 5))
+      #expect(view.text == prefix + "追記\n# 編集する本文\n後続の本文\n最後の行")
     }
 
     @Test(arguments: ["> 引用", "# 見出し", "## 見出し", "**太字**", "*斜体*", "`code`", "[link](url)"])
-    func 入力直後の属性が構文と一致する(text: String) {
-      let state = makeState(text: text)
-      let controller = EditorTextController(state: state, enqueueHighlight: { _ in })
-      let view = controller.textView
+    func 入力の直後から装飾が構文と一致する(text: String) {
       for location in [0, 2, (text as NSString).length] {
-        state.text = text
-        controller.syncFromState()
-        controller.highlight()
-        view.setSelectedRange(NSRange(location: location, length: 0))
-        view.insertText("a", replacementRange: view.selectedRange())
-        let expected = NSTextStorage(string: view.string)
-        MarkdownAttributer(theme: state.theme, preferences: state.preferences).apply(to: expected)
-        let actual = view.textStorage!.attributedSubstring(
-          from: NSRange(location: location, length: 1))
-        #expect(
-          actual.isEqual(
-            to: expected.attributedSubstring(from: NSRange(location: location, length: 1))))
-        controller.highlight()
-        #expect(view.textStorage!.isEqual(to: expected))
+        let (_, view, state) = makeEditor(text: text)
+        view.select([caret(location)], primary: 0)
+        view.insertText("a", replacementRange: caret(NSNotFound))
+        expectHighlighted(view, state)
       }
     }
 
-    @Test func 改行と記号削除と選択置換で引用色を解除する() {
-      let state = makeState(text: "> 引用")
-      let controller = EditorTextController(state: state, enqueueHighlight: { _ in })
-      let view = controller.textView
-      func expectBodyInput() {
-        let location = view.selectedRange().location
-        view.insertText("a", replacementRange: view.selectedRange())
-        #expect(
-          view.textStorage!.attribute(.foregroundColor, at: location, effectiveRange: nil)
-            as? NSColor
-            == state.theme.editorForeground.nsColor)
-      }
-      view.setSelectedRange(NSRange(location: 4, length: 0))
+    @Test func 改行と記号削除と選択置換の直後から装飾が構文と一致する() {
+      let (_, view, state) = makeEditor(text: "> 引用")
+      view.select([caret(4)], primary: 0)
       view.insertNewline(nil)
-      expectBodyInput()
-      state.text = "> 引用"
-      controller.syncFromState()
-      controller.highlight()
-      view.setSelectedRange(NSRange(location: 0, length: 1))
+      view.insertText("a", replacementRange: caret(NSNotFound))
+      expectHighlighted(view, state)
+      view.select([NSRange(location: 0, length: 1)], primary: 0)
       view.deleteBackward(nil)
-      expectBodyInput()
-      state.text = "> 引用"
-      controller.syncFromState()
-      controller.highlight()
+      expectHighlighted(view, state)
       view.selectAll(nil)
-      expectBodyInput()
-      #expect(view.string == "a")
+      view.insertText("a", replacementRange: caret(NSNotFound))
+      expectHighlighted(view, state)
+      #expect(view.text == "a")
     }
 
-    @Test func 変換中の属性と選択を保ち確定後に設定を反映する() throws {
-      let state = makeState(text: "> ")
-      let controller = EditorTextController(state: state)
-      let view = controller.textView
-      view.setSelectedRange(NSRange(location: 2, length: 0))
-      let replacement = NSRange(location: NSNotFound, length: 0)
-      let marked = NSAttributedString(string: "にほんご", attributes: [.underlineStyle: 2])
-      view.setMarkedText(
-        marked, selectedRange: NSRange(location: 1, length: 2), replacementRange: replacement)
-      try #require(view.hasMarkedText())
-      let before = NSAttributedString(attributedString: view.textStorage!)
-      let selected = view.selectedRange()
-      let markedRange = view.markedRange()
-      let typing = view.typingAttributes
+    @Test func 外観を変えた直後の入力も新しい設定で表示する() {
+      let (controller, view, state) = makeEditor(text: "本文")
+      view.select([caret(2)], primary: 0)
       state.preferences.fontSize = 24
       state.preferences.themeID = "light"
       controller.syncFromState()
-      controller.highlight()
-      #expect(view.textStorage!.isEqual(to: before))
-      #expect(view.selectedRange() == selected)
-      #expect(view.markedRange() == markedRange)
-      #expect(NSDictionary(dictionary: view.typingAttributes).isEqual(to: typing))
-      view.insertText("日本語", replacementRange: replacement)
-      controller.highlight()
-      let location = (view.string as NSString).length
-      view.insertText("a", replacementRange: NSRange(location: location, length: 0))
-      let expected = NSTextStorage(string: view.string)
-      MarkdownAttributer(theme: state.theme, preferences: state.preferences).apply(to: expected)
-      #expect(
-        view.textStorage!.attributedSubstring(from: NSRange(location: location, length: 1))
-          .isEqual(to: expected.attributedSubstring(from: NSRange(location: location, length: 1))))
-      #expect(view.string == "> 日本語a")
+      view.insertText("a", replacementRange: caret(NSNotFound))
+      expectHighlighted(view, state)
     }
 
-    @Test func 文字を置換しない変換確定でも保留中の装飾を反映する() {
-      var pending: [@MainActor () -> Void] = []
-      let state = makeState(text: "> ")
-      let controller = EditorTextController(state: state, enqueueHighlight: { pending.append($0) })
-      pending.removeAll()
-      let view = controller.textView
-      view.setSelectedRange(NSRange(location: 2, length: 0))
+    @Test func 変換中の文字は下書きに含めず確定したら反映する() throws {
+      let (_, view, state) = makeEditor(text: "> ")
+      view.select([caret(2)], primary: 0)
       view.setMarkedText(
-        "にほんご", selectedRange: NSRange(location: 4, length: 0),
-        replacementRange: NSRange(location: NSNotFound, length: 0))
-      while !pending.isEmpty { pending.removeFirst()() }
-      state.preferences.fontSize = 24
-      controller.syncFromState()
-      view.unmarkText()
-      while !pending.isEmpty { pending.removeFirst()() }
+        "にほんご", selectedRange: NSRange(location: 1, length: 2), replacementRange: caret(NSNotFound))
+      try #require(view.hasMarkedText())
+      #expect(view.text == "> にほんご")
+      #expect(view.markedRange() == NSRange(location: 2, length: 4))
+      #expect(view.selectedRange() == NSRange(location: 3, length: 2))
+      #expect(state.text == "> ")
+      view.insertText("日本語", replacementRange: caret(NSNotFound))
       #expect(!view.hasMarkedText())
-      #expect((view.typingAttributes[.font] as? NSFont)?.pointSize == 24)
-      #expect(
-        (view.textStorage!.attribute(.font, at: 2, effectiveRange: nil) as? NSFont)?.pointSize == 24
-      )
+      #expect(state.text == "> 日本語")
+      #expect(view.selectedRange() == caret(5))
+      expectHighlighted(view, state)
     }
 
-    @Test func ハイライト後もUndoRedoで本文と選択を復元する() throws {
-      let controller = EditorTextController(state: makeState(text: "> 引用"))
-      let view = controller.textView
-      let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 500, height: 300),
-        styleMask: [.titled], backing: .buffered, defer: false)
-      window.contentView = controller.scrollView
-      window.makeFirstResponder(view)
-      defer { window.orderOut(nil) }
-      view.setSelectedRange(NSRange(location: 4, length: 0))
-      let undo = try #require(view.undoManager)
-      undo.beginUndoGrouping()
-      view.insertText("追記", replacementRange: view.selectedRange())
-      undo.endUndoGrouping()
-      controller.highlight()
-      undo.undo()
-      controller.highlight()
-      #expect(view.string == "> 引用")
-      #expect(view.selectedRange() == NSRange(location: 4, length: 0))
-      undo.redo()
-      controller.highlight()
-      #expect(view.string == "> 引用追記")
-      #expect(view.selectedRange() == NSRange(location: 6, length: 0))
+    @Test func 未確定の文字を全て消すと変換を終える() {
+      let (_, view, state) = makeEditor(text: "本文")
+      view.select([caret(2)], primary: 0)
+      view.setMarkedText("か", selectedRange: caret(1), replacementRange: caret(NSNotFound))
+      view.setMarkedText("", selectedRange: caret(0), replacementRange: caret(NSNotFound))
+      #expect(!view.hasMarkedText())
+      #expect(view.text == "本文" && state.text == "本文")
+      #expect(!view.document.canUndo)
+    }
+
+    @Test func 変換確定直後の同期で次の未確定文字を消さない() throws {
+      let (controller, view, state) = makeEditor()
+      let currentInput = caret(NSNotFound)
+      view.setMarkedText("にゅうりょく", selectedRange: caret(6), replacementRange: currentInput)
+      view.setMarkedText("入力", selectedRange: caret(2), replacementRange: currentInput)
+      view.insertText("入力", replacementRange: currentInput)
+      #expect(state.text == "入力")
+
+      view.setMarkedText("。", selectedRange: caret(1), replacementRange: currentInput)
+      try #require(view.hasMarkedText())
+      let marked = view.markedRange()
+      let selected = view.selectedRange()
+      controller.syncFromState()
+
+      #expect(view.text == "入力。")
+      #expect(view.markedRange() == marked)
+      #expect(view.selectedRange() == selected)
+      view.insertText("。", replacementRange: currentInput)
+      #expect(state.text == "入力。")
+    }
+
+    @Test func 最初の未確定文字も同期で消さない() {
+      let (controller, view, _) = makeEditor()
+      view.setMarkedText("にほんご", selectedRange: caret(4), replacementRange: caret(NSNotFound))
+      controller.syncFromState()
+      #expect(view.text == "にほんご")
+      #expect(view.hasMarkedText())
+    }
+
+    @Test func 変換中の改行命令では本文を変えない() {
+      let (_, view, _) = makeEditor(text: "  ")
+      view.select([caret(2)], primary: 0)
+      view.setMarkedText("入力", selectedRange: caret(2), replacementRange: caret(NSNotFound))
+      view.insertNewline(nil)
+      #expect(view.text == "  入力")
+      #expect(view.hasMarkedText())
+    }
+
+    @Test func IMEが直前の文字の置き換えを指示しても全てのキャレットに当てる() {
+      let (_, view, _) = makeEditor(text: "ab\nab")
+      view.select([caret(2), caret(5)], primary: 1)
+      // 主のキャレットの直前の 1 文字を置き換える指示。
+      view.setMarkedText("X", selectedRange: caret(1), replacementRange: NSRange(location: 4, length: 1))
+      #expect(view.text == "aX\naX")
+      view.unmarkText()
+      view.insertText("Y", replacementRange: NSRange(location: 4, length: 1))
+      #expect(view.text == "aY\naY")
+    }
+
+    @Test func 取り消しとやり直しで本文と選択を戻す() {
+      let (_, view, state) = makeEditor(text: "> 引用")
+      view.select([caret(4)], primary: 0)
+      view.insertText("追記", replacementRange: caret(NSNotFound))
+      view.undo(nil)
+      #expect(view.text == "> 引用" && state.text == "> 引用")
+      #expect(view.selectedRange() == caret(4))
+      expectHighlighted(view, state)
+      view.redo(nil)
+      #expect(view.text == "> 引用追記")
+      #expect(view.selectedRange() == caret(6))
+    }
+
+    @Test func キャレットを動かすと続けて打った文字は別に取り消す() {
+      let (_, view, _) = makeEditor(text: "ab")
+      view.insertText("1", replacementRange: caret(NSNotFound))
+      view.insertText("2", replacementRange: caret(NSNotFound))
+      view.moveToEndOfDocument(nil)
+      view.insertText("3", replacementRange: caret(NSNotFound))
+      view.undo(nil)
+      #expect(view.text == "12ab")
+      view.undo(nil)
+      #expect(view.text == "ab")
     }
 
     private func bodyFontSize(_ controller: EditorTextController) -> Double? {
       let font =
-        controller.textView.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        controller.editorView.layout.storage.attribute(.font, at: 0, effectiveRange: nil)
+        as? NSFont
       return font.map { Double($0.pointSize) }
     }
 
@@ -257,223 +214,273 @@ extension AppKitTests {
       let state = makeState(text: "本文です")
       state.preferences.themeID = "dark"
       let controller = EditorTextController(state: state)
-      #expect(controller.textView.backgroundColor.brightnessComponent < 0.5)
+      #expect(controller.editorView.backgroundColor.brightnessComponent < 0.5)
 
       state.preferences.themeID = "light"
-      #expect(await waitUntil { controller.textView.backgroundColor.brightnessComponent > 0.5 })
+      #expect(await waitUntil { controller.editorView.backgroundColor.brightnessComponent > 0.5 })
     }
 
-    @Test func タブ幅の変更がエディタに伝わる() async throws {
-      let state = makeState(text: "本文です")
-      let controller = EditorTextController(state: state)
-      let before = controller.textView.defaultParagraphStyle?.defaultTabInterval
-
+    @Test func タブ幅の設定が本文の描画に効く() async throws {
+      let (_, view, state) = makeEditor(text: "\tb")
+      func tabEnd() -> CGFloat { view.layout.caretRect(at: 1).minX }
+      let before = tabEnd()
       state.preferences.tabSize = 8
-      #expect(
-        await waitUntil {
-          controller.textView.defaultParagraphStyle?.defaultTabInterval != before
-        })
+      #expect(await waitUntil { tabEnd() > before })
     }
 
     @Test func 外側から差し替えた本文がエディタに伝わる() async throws {
-      let state = makeState(text: "はじめの本文")
-      let controller = EditorTextController(state: state)
-
+      let (_, view, state) = makeEditor(text: "はじめの本文")
+      view.select([caret(4)], primary: 0)
       state.text = "差し替えた本文"
-      #expect(await waitUntil { controller.textView.string == "差し替えた本文" })
+      #expect(await waitUntil { view.text == "差し替えた本文" })
+      #expect(view.selectedRange() == caret(4))
+      #expect(!view.document.canUndo)
     }
 
     @Test func エディタへの入力が状態に伝わる() {
-      let state = makeState(text: "")
-      let controller = EditorTextController(state: state)
-
-      controller.textView.string = "打ち込んだ"
-      controller.textDidChange(Notification(name: NSText.didChangeNotification))
+      let (_, view, state) = makeEditor()
+      view.insertText("打ち込んだ", replacementRange: caret(NSNotFound))
       #expect(state.text == "打ち込んだ")
       #expect(state.metrics.characters == 5)
     }
 
-    @Test func 打鍵の直後にはハイライトを掛け直さない() {
-      let state = makeState(text: "普通の本文")
-      let controller = EditorTextController(state: state)
-      let storage = controller.textView.textStorage!
-
-      controller.textView.insertText("# ", replacementRange: NSRange(location: 0, length: 0))
-      let font = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-      #expect(
-        font.map { Double($0.pointSize) } == Preferences.default.fontSize,
-        "打鍵と同時に全文を敷き直している")
-    }
-
-    @Test func 次の実行機会にハイライトが掛かる() async {
-      let state = makeState(text: "普通の本文")
-      let controller = EditorTextController(state: state)
-      let storage = controller.textView.textStorage!
-
-      controller.textView.insertText("# ", replacementRange: NSRange(location: 0, length: 0))
-      #expect(
-        await waitUntil(
-          {
-            let font = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-            return font.map { Double($0.pointSize) } ?? 0 > Preferences.default.fontSize
-          }, timeout: .seconds(2)), "待っても見出しが大きくならない")
-    }
-
-    @Test func 変換中はハイライトを掛け直さない() {
-      let state = makeState(text: "本文")
-      let controller = EditorTextController(state: state)
-      let textView = controller.textView
-      textView.setSelectedRange(NSRange(location: 0, length: 0))
-      textView.setMarkedText(
-        "へんかん", selectedRange: NSRange(location: 4, length: 0),
-        replacementRange: NSRange(location: 0, length: 0))
-      try? #require(textView.hasMarkedText())
-
-      // 変換中に敷き直すと、AppKit が marked text に付けた属性を消してしまう
-      let before = textView.textStorage!.attributes(at: 0, effectiveRange: nil)
-      controller.highlight()
-      let after = textView.textStorage!.attributes(at: 0, effectiveRange: nil)
-      #expect(before.keys.map(\.rawValue).sorted() == after.keys.map(\.rawValue).sorted())
-    }
-
     @Test func コピーは書式なしテキストだけをクリップボードに載せる() {
-      let state = makeState(text: "**太字**と# 見出し")
-      let controller = EditorTextController(state: state)
-      controller.textView.selectAll(nil)
-
+      let (_, view, _) = makeEditor(text: "**太字**と# 見出し")
+      view.selectAll(nil)
       let pasteboard = NSPasteboard(name: .init("ediro.test.\(UUID().uuidString)"))
-      pasteboard.clearContents()
-      controller.textView.writeSelection(
-        to: pasteboard, types: controller.textView.writablePasteboardTypes)
-
+      view.writeSelection(to: pasteboard)
       let written = pasteboard.types ?? []
       #expect(!written.contains(.rtf), "書式付きデータが載っている: \(written)")
       #expect(pasteboard.string(forType: .string) == "**太字**と# 見出し")
     }
 
-    private func insertNewline(_ controller: EditorTextController) {
-      _ = controller.textView(
-        controller.textView, doCommandBy: #selector(NSResponder.insertNewline(_:)))
-    }
-
     @Test func 改行すると前の行のインデントを引き継ぐ() {
-      let state = makeState()
-      let controller = EditorTextController(state: state)
-      controller.textView.string = "    ネストした行"
-      controller.textView.setSelectedRange(NSRange(location: 12, length: 0))
-
-      insertNewline(controller)
-      #expect(controller.textView.string == "    ネストした行\n    ")
+      let (_, view, _) = makeEditor(text: "    ネストした行")
+      view.select([caret(10)], primary: 0)
+      view.insertNewline(nil)
+      #expect(view.text == "    ネストした行\n    ")
     }
 
     @Test func インデントのない行では余計な空白を足さない() {
-      let state = makeState()
-      let controller = EditorTextController(state: state)
-      controller.textView.string = "ふつうの行"
-      controller.textView.setSelectedRange(NSRange(location: 5, length: 0))
-
-      // 既定の改行に委ねるので、この呼び出しでは文字列が変わらない
-      insertNewline(controller)
-      #expect(controller.textView.string == "ふつうの行")
+      let (_, view, _) = makeEditor(text: "ふつうの行")
+      view.select([caret(5)], primary: 0)
+      view.insertNewline(nil)
+      #expect(view.text == "ふつうの行\n")
     }
 
     @Test func 行頭で改行してもインデントは深くならない() {
-      let state = makeState()
-      let controller = EditorTextController(state: state)
-      controller.textView.string = "    インデント行"
-      controller.textView.setSelectedRange(NSRange(location: 0, length: 0))
-
-      // 既定の改行に委ねる。自前で足すと、空行に空白が残ったうえ深さが倍になる
-      insertNewline(controller)
-      #expect(controller.textView.string == "    インデント行")
+      let (_, view, _) = makeEditor(text: "    インデント行")
+      view.select([caret(0)], primary: 0)
+      view.insertNewline(nil)
+      #expect(view.text == "\n    インデント行")
     }
 
     @Test func インデントの内側で改行しても深さを保つ() {
-      let state = makeState()
-      let controller = EditorTextController(state: state)
-      controller.textView.string = "    インデント行"
-      controller.textView.setSelectedRange(NSRange(location: 2, length: 0))
-
-      insertNewline(controller)
-      #expect(controller.textView.string == "  \n    インデント行")
+      let (_, view, _) = makeEditor(text: "    インデント行")
+      view.select([caret(2)], primary: 0)
+      view.insertNewline(nil)
+      #expect(view.text == "  \n    インデント行")
     }
 
     @Test func 行の途中で改行しても深さを保つ() {
-      let state = makeState()
-      let controller = EditorTextController(state: state)
-      controller.textView.string = "  あいうえお"
-      controller.textView.setSelectedRange(NSRange(location: 4, length: 0))
-
-      insertNewline(controller)
-      #expect(controller.textView.string == "  あい\n  うえお")
+      let (_, view, _) = makeEditor(text: "  あいうえお")
+      view.select([caret(4)], primary: 0)
+      view.insertNewline(nil)
+      #expect(view.text == "  あい\n  うえお")
     }
 
-    @Test func タブ幅の設定が本文の描画に効く() {
-      func width(tabSize: Int) -> Double {
-        let state = makeState(text: "a\tb")
-        state.preferences.tabSize = tabSize
-        let controller = EditorTextController(state: state)
-        guard let storage = controller.textView.textStorage else { return 0 }
-        return Double(storage.size().width)
+    // MARK: - 移動
+
+    @Test func 単語と行の単位で動いて選択を広げる() {
+      let (_, view, _) = makeEditor(text: "one two three\nnext")
+      view.select([caret(5)], primary: 0)
+      view.moveWordRight(nil)
+      #expect(view.selectedRange() == caret(7))
+      view.moveWordLeftAndModifySelection(nil)
+      #expect(view.selectedRange() == NSRange(location: 4, length: 3))
+      view.moveToEndOfLine(nil)
+      #expect(view.selectedRange() == caret(13))
+      view.moveToBeginningOfLineAndModifySelection(nil)
+      #expect(view.selectedRange() == NSRange(location: 0, length: 13))
+      view.moveDown(nil)
+      #expect(view.selectedRange().location > 13)
+      view.deleteWordBackward(nil)
+      #expect(view.text.hasPrefix("one two three\n"))
+    }
+
+    @Test func 行と段落の端への移動は端にいてもその行に留まる() {
+      let (_, view, _) = makeEditor(text: "abc def\nghi jkl\nmno")
+      for move in [view.moveToBeginningOfLine, view.moveToBeginningOfParagraph, view.moveToLeftEndOfLine] {
+        view.select([caret(8)], primary: 0)
+        move(nil)
+        #expect(view.selectedRange() == caret(8))
       }
-      #expect(width(tabSize: 8) > width(tabSize: 2))
+      for move in [view.moveToEndOfLine, view.moveToEndOfParagraph, view.moveToRightEndOfLine] {
+        view.select([caret(15)], primary: 0)
+        move(nil)
+        #expect(view.selectedRange() == caret(15))
+      }
     }
 
-    @Test func 変換確定直後の同期で次の未確定文字を消さない() throws {
-      let state = makeState()
-      let controller = EditorTextController(state: state)
-      let textView = controller.textView
-      let currentInput = NSRange(location: NSNotFound, length: 0)
-      textView.setMarkedText(
-        "にゅうりょく", selectedRange: NSRange(location: 6, length: 0),
-        replacementRange: currentInput)
-      textView.setMarkedText(
-        "入力", selectedRange: NSRange(location: 2, length: 0), replacementRange: currentInput)
-      textView.insertText("入力", replacementRange: currentInput)
-      #expect(state.text == "入力")
-
-      textView.setMarkedText(
-        "。", selectedRange: NSRange(location: 1, length: 0), replacementRange: currentInput)
-      try #require(textView.hasMarkedText())
-      let marked = textView.markedRange()
-      let selected = textView.selectedRange()
-
-      controller.syncFromState()
-
-      #expect(textView.string == "入力。")
-      #expect(textView.markedRange() == marked)
-      #expect(textView.selectedRange() == selected)
-      textView.insertText("。", replacementRange: currentInput)
-      #expect(state.text == "入力。")
+    @Test func 行の端で行の端まで消すと改行だけを消す() {
+      let text = "abc def\nghi jkl\nmno"
+      let (_, forward, _) = makeEditor(text: text)
+      forward.select([caret(7)], primary: 0)
+      forward.deleteToEndOfParagraph(nil)
+      #expect(forward.text == "abc defghi jkl\nmno")
+      forward.select([caret(3)], primary: 0)
+      forward.deleteToEndOfLine(nil)
+      #expect(forward.text == "abc\nmno")
+      let (_, backward, _) = makeEditor(text: text)
+      backward.select([caret(8)], primary: 0)
+      backward.deleteToBeginningOfLine(nil)
+      #expect(backward.text == "abc defghi jkl\nmno")
+      backward.select([caret(10)], primary: 0)
+      backward.deleteToBeginningOfParagraph(nil)
+      #expect(backward.text == " jkl\nmno")
     }
 
-    @Test func 最初の未確定文字も同期で消さない() {
-      let controller = EditorTextController(state: makeState())
-      let textView = controller.textView
-      textView.setMarkedText(
-        "にほんご", selectedRange: NSRange(location: 4, length: 0),
-        replacementRange: NSRange(location: NSNotFound, length: 0))
-
-      controller.syncFromState()
-
-      #expect(textView.string == "にほんご")
-      #expect(textView.hasMarkedText())
+    @Test func 置換範囲が本文の外にはみ出すキャレットは広げずに打つ() {
+      let (_, view, _) = makeEditor(text: "abc\nxyzw")
+      view.select([caret(0), caret(6)], primary: 1)
+      view.insertText("Q", replacementRange: NSRange(location: 4, length: 2))
+      #expect(view.text == "Qabc\nQzw")
+      let (_, emoji, _) = makeEditor(text: "x😀\nabc\ntail")
+      emoji.select([caret(3), caret(6)], primary: 1)
+      emoji.insertText("é", replacementRange: NSRange(location: 5, length: 1))
+      #expect(emoji.text == "x😀é\naéc\ntail")
     }
 
-    @Test func 変換中の改行命令には自動インデントを適用しない() {
-      let controller = EditorTextController(state: makeState(text: "  "))
-      let textView = controller.textView
-      textView.setSelectedRange(NSRange(location: 2, length: 0))
-      textView.setMarkedText(
-        "入力", selectedRange: NSRange(location: 2, length: 0),
-        replacementRange: NSRange(location: NSNotFound, length: 0))
+    @Test func 選択が一つならEscを次の応答者に渡す() {
+      final class Receiver: NSResponder {
+        var cancelled = false
+        override func cancelOperation(_ sender: Any?) { cancelled = true }
+      }
+      let (_, view, _) = makeEditor(text: "abc")
+      let receiver = Receiver()
+      view.nextResponder = receiver
+      view.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+      #expect(receiver.cancelled)
+    }
 
-      let handled = controller.textView(
-        textView, doCommandBy: #selector(NSResponder.insertNewline(_:)))
+    @Test func 変換中の切り取りはクリップボードも本文も変えない() {
+      let (_, view, _) = makeEditor(text: "abc")
+      view.select([caret(3)], primary: 0)
+      view.setMarkedText("かな", selectedRange: NSRange(location: 0, length: 2), replacementRange: caret(NSNotFound))
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString("kept", forType: .string)
+      view.cut(nil)
+      #expect(NSPasteboard.general.string(forType: .string) == "kept")
+      #expect(view.text == "abcかな" && view.hasMarkedText())
+    }
 
-      #expect(!handled)
-      #expect(textView.string == "  入力")
-      #expect(textView.hasMarkedText())
+    @Test func 上下の移動で横位置を保つ() {
+      let (_, view, _) = makeEditor(text: "abcdef\nab\nabcdef")
+      view.select([caret(5)], primary: 0)
+      view.moveDown(nil)
+      #expect(view.selectedRange() == caret(9))
+      view.moveDown(nil)
+      #expect(view.selectedRange() == caret(15))
+      view.moveUp(nil)
+      view.moveUp(nil)
+      #expect(view.selectedRange() == caret(5))
+    }
+
+    // MARK: - 複数カーソル
+
+    @Test func 複数のキャレットに同時に打ち込んで一度に取り消す() {
+      let (_, view, state) = makeEditor(text: "a\nb\nc")
+      view.select([caret(1), caret(3), caret(5)], primary: 0)
+      view.insertText("!", replacementRange: caret(NSNotFound))
+      #expect(view.text == "a!\nb!\nc!" && state.text == "a!\nb!\nc!")
+      view.undo(nil)
+      #expect(view.text == "a\nb\nc")
+      #expect(carets(view) == [caret(1), caret(3), caret(5)])
+    }
+
+    @Test func 複数のキャレットで変換して確定する() throws {
+      let (_, view, state) = makeEditor(text: "a\nb")
+      view.select([caret(1), caret(3)], primary: 1)
+      view.setMarkedText("にほん", selectedRange: caret(3), replacementRange: caret(NSNotFound))
+      #expect(view.text == "aにほん\nbにほん")
+      #expect(view.markedRange() == NSRange(location: 6, length: 3))
+      #expect(state.text == "a\nb")
+      view.insertText("日本", replacementRange: caret(NSNotFound))
+      #expect(view.text == "a日本\nb日本" && state.text == "a日本\nb日本")
+      #expect(carets(view) == [caret(3), caret(7)])
+    }
+
+    @Test func 複数のキャレットでの改行はそれぞれの行のインデントを引き継ぐ() {
+      let (_, view, _) = makeEditor(text: "a\n  b")
+      view.select([caret(1), caret(5)], primary: 0)
+      view.insertNewline(nil)
+      #expect(view.text == "a\n\n  b\n  ")
+    }
+
+    @Test func 行数がキャレットの数と同じなら一行ずつ貼り付ける() {
+      let (_, view, _) = makeEditor(text: "a\nb\nc")
+      let pasteboard = NSPasteboard(name: .init("ediro.test.\(UUID().uuidString)"))
+      pasteboard.clearContents()
+      pasteboard.setString("1\n2", forType: .string)
+      view.select([caret(1), caret(3)], primary: 0)
+      view.paste(from: pasteboard)
+      #expect(view.text == "a1\nb2\nc")
+      view.select([caret(0), caret(3), caret(6)], primary: 0)
+      view.paste(from: pasteboard)
+      #expect(view.text == "1\n2a1\n1\n2b2\n1\n2c")
+      // CRLF で区切った行も一行ずつ配る。
+      let (_, crlf, _) = makeEditor(text: "a\nb")
+      pasteboard.clearContents()
+      pasteboard.setString("1\r\n2", forType: .string)
+      crlf.select([caret(1), caret(3)], primary: 0)
+      crlf.paste(from: pasteboard)
+      #expect(crlf.text == "a1\nb2")
+    }
+
+    @Test func 複数の選択はコピーすると改行で繋ぐ() {
+      let (_, view, _) = makeEditor(text: "one two")
+      view.select([NSRange(location: 0, length: 3), NSRange(location: 4, length: 3)], primary: 0)
+      let pasteboard = NSPasteboard(name: .init("ediro.test.\(UUID().uuidString)"))
+      view.writeSelection(to: pasteboard)
+      #expect(pasteboard.string(forType: .string) == "one\ntwo")
+    }
+
+    @Test func 次の一致を選択に加える() {
+      let (_, view, _) = makeEditor(text: "foo bar foo foo")
+      view.select([caret(1)], primary: 0)
+      view.addNextOccurrence(nil)
+      #expect(carets(view) == [NSRange(location: 0, length: 3)])
+      view.addNextOccurrence(nil)
+      #expect(carets(view) == [NSRange(location: 0, length: 3), NSRange(location: 8, length: 3)])
+      #expect(view.selectedRange() == NSRange(location: 8, length: 3))
+      view.addNextOccurrence(nil)
+      view.insertText("X", replacementRange: caret(NSNotFound))
+      #expect(view.text == "X bar X X")
+    }
+
+    @Test func 次の一致は末尾から先頭へ回って探す() {
+      let (_, view, _) = makeEditor(text: "aa x aa")
+      view.select([NSRange(location: 5, length: 2)], primary: 0)
+      view.addNextOccurrence(nil)
+      #expect(carets(view) == [NSRange(location: 0, length: 2), NSRange(location: 5, length: 2)])
+      #expect(view.selectedRange() == NSRange(location: 0, length: 2))
+    }
+
+    @Test func 上下の行にキャレットを足す() {
+      let (_, view, _) = makeEditor(text: "abc\nabc\nabc")
+      view.select([caret(6)], primary: 0)
+      view.addCursorAbove(nil)
+      #expect(carets(view) == [caret(2), caret(6)])
+      #expect(view.selectedRange() == caret(2))
+      view.addCursorBelow(nil)
+      #expect(carets(view) == [caret(2), caret(6), caret(10)])
+    }
+
+    @Test func Escで主のキャレットだけを残す() {
+      let (_, view, _) = makeEditor(text: "abc\nabc")
+      view.select([caret(1), caret(5)], primary: 1)
+      view.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+      #expect(carets(view) == [caret(5)])
     }
   }
 }
