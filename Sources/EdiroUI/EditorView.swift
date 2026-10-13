@@ -62,6 +62,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   private var typedRanges: [NSRange] = []
   /// Writing Tools に渡した本文の範囲と、その動作中の状態。
   var writingTools = WritingToolsState()
+  /// ドラッグ＆ドロップと自動スクロールの状態。
+  var dragAndDrop = DragAndDropState()
 
   init(text: String) {
     document = Self.makeDocument(text)
@@ -72,6 +74,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     contextMenuAdditions = textCheckingMenuAdditions
     attach()
     setUpWritingTools()
+    registerForDraggedTypes(Self.readableTypes)
   }
 
   /// 本文を持つ Document。Markdown の行トークンはエンジンが編集のたびに作り直す。
@@ -182,7 +185,12 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   func containerPoint(_ event: NSEvent) -> CGPoint {
-    let point = convert(event.locationInWindow, from: nil)
+    containerPoint(window: event.locationInWindow)
+  }
+
+  /// ウィンドウの座標の点を、本文の配置の座標にする。
+  func containerPoint(window point: NSPoint) -> CGPoint {
+    let point = convert(point, from: nil)
     return CGPoint(x: point.x - textOrigin.x, y: point.y - textOrigin.y)
   }
 
@@ -251,6 +259,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     }
 
     drawMarkedText(origin: origin)
+    drawDropCaret()
   }
 
   /// `dirtyRect` (ビューの座標) に掛かる本文を描く。
@@ -285,15 +294,16 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     }
   }
 
+  /// `offset` の位置に描くキャレットの枠 (ビューの座標)。
+  func caretFrame(at offset: Int) -> CGRect {
+    let rect = layout.caretRect(at: min(offset, layout.storage.length))
+    return CGRect(
+      x: rect.minX + textOrigin.x - 1, y: rect.minY + textOrigin.y, width: 2, height: rect.height)
+  }
+
   /// 空の選択ごとにキャレットを置く。点滅はシステムの表示に任せる。
   func updateCarets() {
-    let points =
-      session.selections.filter(\.isEmpty).map { selection -> CGRect in
-        let rect = layout.caretRect(at: offset(of: selection.head))
-        return CGRect(
-          x: rect.minX + textOrigin.x - 1, y: rect.minY + textOrigin.y, width: 2,
-          height: rect.height)
-      }
+    let points = session.selections.filter(\.isEmpty).map { caretFrame(at: offset(of: $0.head)) }
     while carets.count < points.count {
       let caret = NSTextInsertionIndicator(frame: .zero)
       addSubview(caret)
@@ -1063,9 +1073,10 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     paste(from: .general)
   }
 
-  /// 行数とキャレットの数が揃っていれば、一行ずつ各キャレットに配る。
+  /// 行数とキャレットの数が揃っていれば、一行ずつ各キャレットに配る。文字列の型が無ければ、
+  /// HTML などから取り出した文字を入れる (`plainText(from:)`)。
   func paste(from pasteboard: NSPasteboard) {
-    guard let pasted = pasteboard.string(forType: .string) else { return }
+    guard let pasted = Self.plainText(from: pasteboard) else { return }
     let string = Self.normalizingLineEndings(pasted)
     let count = session.selections.count
     let lines = string.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -1095,7 +1106,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     case #selector(cut(_:)), #selector(delete(_:)):
       return !hasMarkedText() && session.selections.contains { !$0.isEmpty }
     case #selector(paste(_:)), #selector(pasteAsPlainText(_:)):
-      return NSPasteboard.general.availableType(from: [.string]) != nil
+      return Self.canPaste(from: .general)
     case #selector(startSpeaking(_:)): return layout.storage.length > 0
     // 変換中の文字は、確定するまで変換も調べるも翻訳もしない。
     case #selector(uppercaseWord(_:)), #selector(lowercaseWord(_:)), #selector(capitalizeWord(_:)),
@@ -1154,12 +1165,32 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   // MARK: - マウス
 
   override func mouseDown(with event: NSEvent) {
+    let wasKey = window?.isKeyWindow == true
     window?.makeFirstResponder(self)
-    // 先に確定してから IME に知らせる。逆だと IME の確定と二重になる。
-    if session.markedRange != nil {
-      commitComposition()
-      inputContext?.discardMarkedText()
+    commitCompositionForPointer()
+    dragAndDrop.pressedOnSelection = nil
+    // 選択の上を押したときは、ドラッグを始めるか分かるまで選択を変えない。動かさずに離したら
+    // キャレットを置く。
+    if event.clickCount == 1, !event.modifierFlags.contains(.shift),
+      selectionContains(containerPoint(event))
+    {
+      dragAndDrop.pressedOnSelection = event
+      dragAndDrop.pressedWhileInactive = !wasKey
+      return
     }
+    click(event)
+  }
+
+  /// マウスで本文を操作する前に、変換中の文字を確定する。先に確定してから IME に知らせる。
+  /// 逆だと IME の確定と二重になる。
+  func commitCompositionForPointer() {
+    guard session.markedRange != nil else { return }
+    commitComposition()
+    inputContext?.discardMarkedText()
+  }
+
+  /// 押した位置にキャレットを置くか、押した回数に応じて単語や段落を選び、ドラッグで広げる起点にする。
+  private func click(_ event: NSEvent) {
     let clicked = layout.offset(at: containerPoint(event))
     dragGranularity =
       switch event.clickCount {
@@ -1186,11 +1217,28 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   override func mouseDragged(with event: NSEvent) {
-    autoscroll(with: event)
-    extendDrag(to: layout.offset(at: containerPoint(event)))
+    if let pressed = dragAndDrop.pressedOnSelection {
+      let start = pressed.locationInWindow
+      let point = event.locationInWindow
+      guard hypot(point.x - start.x, point.y - start.y) >= Self.dragThreshold else { return }
+      dragAndDrop.pressedOnSelection = nil
+      beginDraggingSelection(with: event)
+      return
+    }
+    guard dragAnchor != nil else { return }
+    // 表示を送るのは自動スクロールに任せる。マウスが表示の外で止まっても、選択を広げながら
+    // 表示を送り続ける。
+    withoutScrolling { extendDrag(to: layout.offset(at: containerPoint(event))) }
+    updateAutoscroll(at: event.locationInWindow, mode: .selecting)
   }
 
   override func mouseUp(with event: NSEvent) {
+    stopAutoscroll()
+    if let pressed = dragAndDrop.pressedOnSelection {
+      dragAndDrop.pressedOnSelection = nil
+      // キーでないウィンドウへの押下は、ウィンドウを前に出すだけにする。
+      if !dragAndDrop.pressedWhileInactive { click(pressed) }
+    }
     dragAnchor = nil
     dragKept = []
   }
@@ -1203,7 +1251,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   /// ドラッグの起点から現在位置までを選ぶ。単語単位なら両端を単語の境界まで広げる。
-  private func extendDrag(to offset: Int) {
+  func extendDrag(to offset: Int) {
     guard let anchor = dragAnchor else { return }
     let current = granularRange(at: offset)
     let start = min(anchor.location, current.location)

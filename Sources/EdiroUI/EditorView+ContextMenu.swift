@@ -338,6 +338,8 @@ extension EditorView: NSServicesMenuRequestor {
   /// 強めのクリックと 3 本指のタップ。クリックした位置の単語か、それを含む選択を調べる。
   /// 位置が表示領域の外 (キーボードからの操作など) なら、主の選択かキャレットのある単語を調べる。
   override func quickLook(with event: NSEvent) {
+    // 選択の上を強く押したときは、離しても選択を残す。
+    dragAndDrop.pressedOnSelection = nil
     guard let request = definitionRequest(for: event) else {
       // ビューの中の文字の無い所では、何も調べない。
       if visibleRect.contains(convert(event.locationInWindow, from: nil)) { return }
@@ -464,7 +466,7 @@ extension EditorView: NSServicesMenuRequestor {
   /// ので、主の選択 (主が範囲を選んでいなければ最初の選択) だけを置き換え、ほかの選択の文字は
   /// 消さずに残す。
   func readSelection(from pboard: NSPasteboard) -> Bool {
-    guard let pasted = pboard.string(forType: .string) else { return false }
+    guard let pasted = Self.plainText(from: pboard) else { return false }
     let string = Self.normalizingLineEndings(pasted)
     let ranges = session.selections.map { nsRange(of: $0.range) }
     let sent = ranges.indices.filter { ranges[$0].length > 0 }
