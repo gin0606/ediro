@@ -243,6 +243,12 @@ extension AppKitTests {
       .init("one two\nthree four\nfive", 2, 8, "selectLine:"),
       .init("ab\ncd", 3, 2, "selectLine:"),
       .init("ab\n\ncd", 3, 0, "selectLine:"),
+      .init("\n\n", 0, 0, "selectLine:"),
+      .init("\nfoo", 0, 0, "selectLine:"),
+      .init("\n", 0, 0, "selectLine:"),
+      .init("\n\nfoo", 0, 0, "selectLine:"),
+      .init("\n\n\n", 0, 0, "selectLine:"),
+      .init("\u{2029}\u{2029}", 0, 0, "selectLine:"),
       .init("one two\n", 8, 0, "selectLine:"),
       .init("", 0, 0, "selectLine:"),
       .init("ab\u{0C}cd", 1, 0, "selectLine:"),
@@ -732,6 +738,95 @@ extension AppKitTests {
       let last = try #require(ranges(view).first)
       #expect(NSMaxRange(last) == 201)
       #expect(last.location > 0)
+    }
+
+    private func wrappedReference(for view: EditorView) -> ReferenceTextView {
+      let reference = ReferenceTextView(text: view.text)
+      reference.textView.textContainer?.widthTracksTextView = false
+      reference.textView.textContainer?.size = view.layout.container.size
+      reference.textView.textContainer?.lineFragmentPadding = view.layout.container.lineFragmentPadding
+      reference.textView.textStorage?.setAttributedString(view.layout.storage)
+      reference.textView.setSelectedRange(caret(0))
+      return reference
+    }
+
+    @Test(arguments: [false, true])
+    func 折り返し行末から選んで編集し一度で取り消せる(replacing: Bool) throws {
+      let text = String(repeating: "word ", count: 40) + "\nnext"
+      let view = makeEditor(text: text, width: 200)
+      let reference = wrappedReference(for: view)
+      defer { reference.close() }
+      let first = view.layout.lineRange(containing: 0)
+      try #require(first.length > 0 && first.length < 200)
+      view.moveToEndOfLine(nil)
+      reference.textView.moveToEndOfLine(nil)
+      #expect(view.selectedRange() == reference.textView.selectedRange())
+      view.selectLine(nil)
+      reference.textView.selectLine(nil)
+      #expect(view.selectedRange() == first)
+      #expect(view.selectedRange() == reference.textView.selectedRange())
+      if replacing {
+        view.insertText("X", replacementRange: caret(NSNotFound))
+        reference.textView.insertText("X", replacementRange: caret(NSNotFound))
+      } else {
+        view.deleteBackward(nil)
+        reference.textView.deleteBackward(nil)
+      }
+      #expect(view.text == reference.textView.string)
+      #expect(view.selectedRange() == reference.textView.selectedRange())
+      reference.textView.breakUndoCoalescing()
+      view.undo(nil)
+      reference.textView.undoManager?.undo()
+      #expect(view.text == text)
+      #expect(reference.textView.string == text)
+    }
+
+    @Test(arguments: ["select", "moveRight:", "moveToBeginningOfDocument:", "moveToEndOfLine:"])
+    func 行末側の選択は次の選択や移動に従う(operation: String) {
+      let view = makeEditor(text: String(repeating: "word ", count: 40), width: 200)
+      let reference = wrappedReference(for: view)
+      defer { reference.close() }
+      view.moveToEndOfLine(nil)
+      reference.textView.moveToEndOfLine(nil)
+      if operation == "select" {
+        view.select([view.selectedRange()], primary: 0)
+        reference.textView.setSelectedRange(
+          reference.textView.selectedRange(), affinity: .downstream, stillSelecting: false)
+      } else {
+        view.doCommand(by: NSSelectorFromString(operation))
+        reference.textView.doCommand(by: NSSelectorFromString(operation))
+      }
+      view.selectLine(nil)
+      reference.textView.selectLine(nil)
+      #expect(view.text == reference.textView.string)
+      #expect(view.selectedRange() == reference.textView.selectedRange())
+    }
+
+    @Test func 折り返し行末の選択は複数のキャレットそれぞれの行を選ぶ() throws {
+      let view = makeEditor(text: String(repeating: "word ", count: 40), width: 200)
+      let lines = view.layout.visualLines()
+      try #require(lines.count > 4)
+      view.select([caret(1), caret(lines[2].range.location + 1)], primary: 1)
+      view.moveToEndOfLine(nil)
+      view.selectLine(nil)
+      #expect(ranges(view) == [lines[0].range, lines[2].range])
+      #expect(view.session.primaryIndex == 1)
+    }
+
+    @Test(arguments: ["word ", "😀", "a\u{301}"])
+    func 折り返し行末の状態は既存の削除範囲を変えない(unit: String) {
+      let text = String(repeating: unit, count: 40)
+      let view = makeEditor(text: text, width: 200)
+      let ordinary = makeEditor(text: text, width: 200)
+      view.moveToEndOfLine(nil)
+      ordinary.select([view.selectedRange()], primary: 0)
+      view.deleteToEndOfLine(nil)
+      ordinary.deleteToEndOfLine(nil)
+      #expect(view.text == ordinary.text)
+      #expect(view.selectedRange() == ordinary.selectedRange())
+      #expect(view.text.hasSuffix(unit))
+      view.undo(nil)
+      #expect(view.text == text)
     }
 
     @Test func 引用符と改ページと削除はキャレットごとに行う() {

@@ -223,11 +223,15 @@ final class EditorLayout {
   }
 
   /// オフセットを含む表示上の行の範囲。行末の改行や改ページなどの区切りの文字は含めない。
-  /// 折り返し位置のオフセットは、キャレットが描かれる次の行に属する。
+  /// 折り返し位置は通常次の行に属するが、`upstream` なら前の行の末尾として扱う。
   ///
   /// 例外として、段落の末尾で改ページなどの直後にあるオフセットは、NSTextView と同じく
   /// その文字で終わる行に属し、行はその文字まで含む。
-  func lineRange(containing offset: Int) -> NSRange {
+  func lineRange(containing offset: Int, upstream: Bool = false) -> NSRange {
+    if upstream, offset > 0, !Self.lineBreaks.contains(storage.mutableString.character(at: offset - 1)) {
+      let previous = lineRange(containing: offset - 1)
+      if NSMaxRange(previous) == offset { return previous }
+    }
     let paragraph = paragraphRange(containing: offset)
     let string = storage.mutableString
     if offset == NSMaxRange(paragraph), offset > paragraph.location,

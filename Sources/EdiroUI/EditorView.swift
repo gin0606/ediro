@@ -42,6 +42,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// `setMark:` で印を付けた範囲。選択ごとに一つ持つ。NSTextView と同じく、本文を編集しても
   /// 位置を動かさない。
   private var marks: [NSRange] = []
+  /// 折り返し位置を、次の行の先頭ではなく前の表示行の末尾として扱うキャレット。
+  private var upstreamLineEnds: Set<Int> = []
 
   /// 本文が変わるたびに増える。訳文で置き換える前に、本文が変わっていないかを確かめる。
   private(set) var textVersion = 0
@@ -108,6 +110,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     observation?.cancel()
     lastKillAppending = nil
     marks = []
+    upstreamLineEnds = []
     try? document.dispose()
     document = Self.makeDocument(text)
     session = try! EditorSession(document: document)
@@ -129,6 +132,9 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   private func handle(_ event: DocumentEvent) {
+    if [.edit, .undo, .redo, .composition, .selection].contains(event.kind) {
+      upstreamLineEnds = []
+    }
     if !keepsKill, [.edit, .undo, .redo, .composition, .selection].contains(event.kind) {
       lastKillAppending = nil
     }
@@ -460,20 +466,26 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   /// 行か段落の端。TextKit の移動は端にいると隣の行へ進むので、自分の行の範囲から求める。
-  private func boundary(of offset: Int, paragraph: Bool, end: Bool) -> Int {
+  private func boundary(of offset: Int, paragraph: Bool, end: Bool, upstream: Bool = false) -> Int {
     let range =
-      paragraph ? layout.paragraphRange(containing: offset) : layout.lineRange(containing: offset)
+      paragraph ? layout.paragraphRange(containing: offset)
+      : layout.lineRange(containing: offset, upstream: upstream)
     return end ? NSMaxRange(range) : range.location
   }
 
   private func moveToBoundary(paragraph: Bool, end: Bool, extending: Bool) {
-    perform {
+    let moved = perform {
       try session.move(extendingSelection: extending) { selection in
         let origin =
           extending || selection.isEmpty
           ? selection.head : end ? selection.range.end : selection.range.start
-        return position(of: boundary(of: offset(of: origin), paragraph: paragraph, end: end))
+        let from = offset(of: origin)
+        return position(of: boundary(
+          of: from, paragraph: paragraph, end: end, upstream: upstreamLineEnds.contains(from)))
       }
+    }
+    if moved, !paragraph, end {
+      upstreamLineEnds = Set(session.selections.filter(\.isEmpty).map { offset(of: $0.head) })
     }
   }
 
@@ -1027,12 +1039,17 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   override func selectLine(_ sender: Any?) {
     let string = layout.storage.mutableString
     let ranges = session.selections.map { selection -> NSRange in
-      var line = layout.lineRange(containing: offset(of: selection.range.start))
+      let start = offset(of: selection.range.start)
+      var line = layout.lineRange(
+        containing: start, upstream: selection.isEmpty && upstreamLineEnds.contains(start))
       while line.length > 0, layout.endsLine(at: NSMaxRange(line) - 1) {
         line.length -= 1
       }
       let end = NSMaxRange(line)
-      if line.length > 0, end < string.length,
+      // NSTextView は先頭で空行が続くときだけ、空行の選択に改行を含める。
+      let leadingEmptyLines = line.location == 0 && string.length > 1
+        && EditorLayout.paragraphSeparators.contains(string.character(at: 1))
+      if line.length > 0 || leadingEmptyLines, end < string.length,
         EditorLayout.paragraphSeparators.contains(string.character(at: end))
       {
         line.length += 1
