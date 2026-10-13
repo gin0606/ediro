@@ -10,8 +10,8 @@ permissions:
 
 jobs:
   release:
-    # ビルドに macOS 26 SDK と Swift 6.2 が要る。
-    runs-on: macos-26
+    # ビルドに Swift 6.4 (Xcode 27) が要る。
+    runs-on: xcode-27
     # 公証の待ち (Makefile の notarytool --timeout) を丸ごと収める。
     timeout-minutes: 45
 

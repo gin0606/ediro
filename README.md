@@ -31,4 +31,5 @@ make release   # 日常使いのビルドを .build/Ediro.app に作る
 
 ## 要件
 
-macOS 26 以降 / Swift 6.2 以降
+- 動作: macOS 27 以降
+- ビルド: Xcode 27 (Swift 6.4) 以降
