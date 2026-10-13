@@ -713,6 +713,83 @@ extension AppKitTests {
       #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
     }
 
+    @Test(arguments: [true, false], [true, false])
+    func サービスのスマートペーストは参照と同じ本文と選択になる(enabled: Bool, marked: Bool) {
+      for (text, selection) in [
+        ("hellofoo", caret(5)),
+        ("helloXfoo", NSRange(location: 5, length: 1)),
+        ("hello foo", caret(6)),
+        ("", caret(0)),
+      ] {
+        let reference = ReferenceTextView(text: text)
+        defer { reference.close() }
+        let (window, view) = makeEditor(text: text)
+        defer { window.close() }
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.setString("world", forType: .string)
+        if marked { pasteboard.setString("", forType: EditorView.smartPasteType) }
+        reference.textView.smartInsertDeleteEnabled = enabled
+        view.smartInsertDeleteEnabled = enabled
+        reference.textView.setSelectedRange(selection)
+        view.select([selection], primary: 0)
+
+        let expectedAccepted = reference.textView.readSelection(from: pasteboard)
+        #expect(expectedAccepted)
+        #expect(view.readSelection(from: pasteboard) == expectedAccepted)
+        #expect(view.text == reference.textView.string)
+        #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
+        view.undo(nil)
+        #expect(view.text == text)
+        #expect(ranges(view) == [selection])
+        #expect(view.undoManager?.canUndo == false)
+      }
+    }
+
+    @Test func サービスのスマートペーストも各選択へ配分して一回で取り消せる() {
+      let text = "aXb cYd"
+      let selections = [NSRange(location: 1, length: 1), caret(4), NSRange(location: 5, length: 1)]
+      let (window, view) = makeEditor(text: text)
+      defer { window.close() }
+      let pasteboard = makePasteboard()
+      defer { pasteboard.releaseGlobally() }
+      view.smartInsertDeleteEnabled = true
+      view.select(selections, primary: 1)
+      pasteboard.setString("one\ntwo\n", forType: .string)
+      pasteboard.setString("", forType: EditorView.smartPasteType)
+
+      #expect(view.readSelection(from: pasteboard))
+      #expect(view.text == "a one b c two d")
+      #expect(ranges(view) == [caret(6), caret(8), caret(14)])
+      #expect(view.session.primaryIndex == 1)
+      view.undo(nil)
+      #expect(view.text == text)
+      #expect(ranges(view) == selections)
+      #expect(view.session.primaryIndex == 1)
+      #expect(view.undoManager?.canUndo == false)
+    }
+
+    @Test func サービスのスマートペーストを配分できなければ他の選択を保持する() {
+      let text = "aXb cYd"
+      let selections = [NSRange(location: 1, length: 1), NSRange(location: 5, length: 1)]
+      let (window, view) = makeEditor(text: text)
+      defer { window.close() }
+      let pasteboard = makePasteboard()
+      defer { pasteboard.releaseGlobally() }
+      view.smartInsertDeleteEnabled = true
+      view.select(selections, primary: 0)
+      pasteboard.setString("one", forType: .string)
+      pasteboard.setString("", forType: EditorView.smartPasteType)
+
+      #expect(view.readSelection(from: pasteboard))
+      #expect(view.text == "a one b cYd")
+      #expect(ranges(view) == [caret(6), NSRange(location: 9, length: 1)])
+      view.undo(nil)
+      #expect(view.text == text)
+      #expect(ranges(view) == selections)
+      #expect(view.undoManager?.canUndo == false)
+    }
+
     // MARK: - 調べる
 
     @Test func 調べる範囲と位置はその文字のベースラインの始点になる() throws {

@@ -486,7 +486,15 @@ extension EditorView: NSServicesMenuRequestor {
       } else {
         [(sent.contains(session.primaryIndex) ? session.primaryIndex : sent[0], string)]
       }
-    let replacements = texts.map { Replacement(ranges[$0.index], $0.text) }
+    let helper = smartInsertDeleteEnabled && pboard.types?.contains(Self.smartPasteType) == true
+      ? inputReference() : nil
+    let replacements = texts.map { item in
+      let range = ranges[item.index]
+      var before: NSString?
+      var after: NSString?
+      helper?.smartInsert(for: item.text, replacing: range, before: &before, after: &after)
+      return Replacement(range, (before as String? ?? "") + item.text + (after as String? ?? ""))
+    }
     let replaced = Dictionary(uniqueKeysWithValues: zip(texts.map(\.index), replacements))
     let selecting = session.selections.indices.map { index -> (anchor: Int, head: Int) in
       if let replacement = replaced[index] {
