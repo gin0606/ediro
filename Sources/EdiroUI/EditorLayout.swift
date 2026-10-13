@@ -178,9 +178,8 @@ final class EditorLayout {
     storage.mutableString.rangeOfComposedCharacterSequence(at: NSMaxRange(range) - 1).location
   }
 
-  /// 点の高さにある表示上の行と、その文字の範囲。範囲は行を終える改行を含む。点がどの行の
-  /// 高さにも無ければ nil。
-  private func visualLine(at point: CGPoint) -> (range: NSRange, frame: CGRect)? {
+  /// 表示行の範囲は行末の改行を含み、最後の空行も含む。
+  func visualLines() -> [(range: NSRange, frame: CGRect)] {
     var lines: [(range: NSRange, frame: CGRect)] = []
     layoutManager.enumerateTextLayoutFragments(
       from: layoutManager.documentRange.location,
@@ -197,7 +196,14 @@ final class EditorLayout {
       }
       return true
     }
-    return lines.first { $0.frame.minY <= point.y && point.y < $0.frame.maxY }
+    if lines.isEmpty {
+      lines.append((NSRange(location: 0, length: 0), caretRect(at: 0)))
+    }
+    return lines
+  }
+
+  private func visualLine(at point: CGPoint) -> (range: NSRange, frame: CGRect)? {
+    visualLines().first { $0.frame.minY <= point.y && point.y < $0.frame.maxY }
   }
 
   /// 単語や行の境界までの移動先。見つからなければ nil。

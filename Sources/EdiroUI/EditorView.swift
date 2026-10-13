@@ -64,6 +64,10 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   var writingTools = WritingToolsState()
   /// ドラッグ＆ドロップと自動スクロールの状態。
   var dragAndDrop = DragAndDropState()
+  private var accessibilitySelections: [NSRange] = []
+  var postAccessibilityNotification: (EditorView, NSAccessibility.Notification) -> Void = {
+    NSAccessibility.post(element: $0, notification: $1)
+  }
 
   init(text: String) {
     document = Self.makeDocument(text)
@@ -103,9 +107,12 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     textVersion += 1
     attach()
     textDidChange(IndexSet(integersIn: 0..<document.snapshot.lineCount))
+    postAccessibilityNotification(self, .valueChanged)
+    postAccessibilityNotification(self, .selectedTextChanged)
   }
 
   private func attach() {
+    accessibilitySelections = session.selections.map { nsRange(of: $0.range) }
     try? session.setLayout(layout)
     observation = try? document.observe { [weak self] event in self?.handle(event) }
   }
@@ -136,6 +143,12 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       if scrollsToSelection { scrollToPrimary() }
     }
     sendWritingToolsUpdates()
+    let selections = session.selections.map { nsRange(of: $0.range) }
+    // 行・列が同じでも、前の行の編集で AX の UTF-16 範囲は移動する。
+    let selectionChanged = event.changes.contains(.selection) || selections != accessibilitySelections
+    accessibilitySelections = selections
+    if event.changes.contains(.text) { postAccessibilityNotification(self, .valueChanged) }
+    if selectionChanged { postAccessibilityNotification(self, .selectedTextChanged) }
   }
 
   private var scrollsToSelection = true
@@ -1414,12 +1427,6 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     let local = convert(window.convertPoint(fromScreen: point), from: nil)
     return layout.offset(at: CGPoint(x: local.x - textOrigin.x, y: local.y - textOrigin.y))
   }
-
-  // MARK: - アクセシビリティ
-
-  override func isAccessibilityElement() -> Bool { true }
-  override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
-  override func accessibilityValue() -> Any? { text }
 }
 
 extension NSString {
