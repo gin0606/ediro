@@ -6,6 +6,49 @@ import EditorEngine
 
 @Suite(.serialized) @MainActor struct TextTests {
     func r(_ a: Int, _ b: Int) -> TextRange { TextRange(Position(0,a), Position(0,b)) }
+    @Test func actionNamesFollowGroupedHistoryAndRedoBranching() throws {
+        let document = Document(id: "names", text: "")
+        let session = try EditorSession(document: document)
+        try session.type("a", historyGroup: "typing")
+        document.setUndoActionName("Typing")
+        try session.type("b", historyGroup: "typing")
+        #expect(document.undoActionName == "Typing")
+        try document.endHistoryGroup()
+        try session.type("paste")
+        document.setUndoActionName("Paste")
+        try document.undo()
+        #expect(document.undoActionName == "Typing")
+        #expect(document.redoActionName == "Paste")
+        try document.undo()
+        #expect(document.undoActionName == "")
+        #expect(document.redoActionName == "Typing")
+        try document.redo()
+        #expect(document.undoActionName == "Typing")
+        try session.type("new")
+        #expect(document.undoActionName == "")
+        #expect(document.redoActionName == "")
+    }
+
+    @Test func compositionActionNameIsAppliedOnlyToNewHistory() throws {
+        let document = Document(id: "composition-name", text: "")
+        let session = try EditorSession(document: document)
+        try session.type("a")
+        document.setUndoActionName("Paste")
+        try session.beginComposition()
+        try session.updateComposition("x")
+        try session.updateComposition("")
+        try session.commitComposition(historyActionName: "Typing")
+        #expect(document.undoActionName == "Paste")
+        try session.beginComposition()
+        try session.updateComposition("日本")
+        try session.commitComposition("日本", historyActionName: "Typing")
+        #expect(document.undoActionName == "Typing")
+        try document.undo()
+        #expect(document.snapshot.text == "a")
+        #expect(document.undoActionName == "Paste")
+        #expect(document.redoActionName == "Typing")
+    }
+
     @Test func pinnedPieceTreeFixtures() throws {
         let d = Document(id: "fixture", text: "1\n2\n3\n4")
         let expected = [Position(0,0), Position(0,1), Position(1,0), Position(1,1), Position(2,0), Position(2,1), Position(3,0)]

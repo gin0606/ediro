@@ -402,16 +402,18 @@ extension AppKitTests {
       #expect(emoji.text == "x😀é\naéc\ntail")
     }
 
-    @Test func 選択が一つならEscを次の応答者に渡す() {
+    @Test func 選択が一つならEscを次の応答者に渡さず補完する() {
       final class Receiver: NSResponder {
         var cancelled = false
         override func cancelOperation(_ sender: Any?) { cancelled = true }
       }
-      let (_, view, _) = makeEditor(text: "abc")
+      let (_, view, _) = makeEditor(text: "hel")
+      view.select([caret(3)], primary: 0)
       let receiver = Receiver()
       view.nextResponder = receiver
       view.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-      #expect(receiver.cancelled)
+      #expect(!receiver.cancelled)
+      #expect(!view.inputAssistance.completionCandidates.isEmpty)
     }
 
     @Test func 変換中の切り取りはクリップボードも本文も変えない() {

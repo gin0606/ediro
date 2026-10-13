@@ -400,13 +400,11 @@ extension AppKitTests {
       #expect(checker.smartQuotesType == .yes)
       #expect(checker.smartDashesType == .yes)
       #expect(checker.textReplacementType == .yes)
-      // これらは入切の値だけを持ち、入力には効かない。
-      for type in [
-        checker.autocorrectionType, checker.smartInsertDeleteType, checker.linkDetectionType,
-        checker.dataDetectionType, checker.textCompletionType,
-      ] {
-        #expect(type == .no)
-      }
+      #expect(checker.autocorrectionType == .no)
+      #expect(checker.smartInsertDeleteType == .yes)
+      #expect(checker.linkDetectionType == .yes)
+      #expect(checker.dataDetectionType == .yes)
+      #expect(checker.textCompletionType == .default)
       view.isGrammarCheckingEnabled = true
       view.isContinuousSpellCheckingEnabled = false
       // 文法は入力中のスペルチェックと合わせて検査する (NSTextView と同じ)。

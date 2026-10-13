@@ -64,6 +64,9 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   var writingTools = WritingToolsState()
   /// ドラッグ＆ドロップと自動スクロールの状態。
   var dragAndDrop = DragAndDropState()
+  let inputAssistance = InputAssistanceState()
+  private lazy var engineUndoManager = EditorUndoManager(view: self)
+  override var undoManager: UndoManager? { engineUndoManager }
   private var accessibilitySelections: [NSRange] = []
   var postAccessibilityNotification: (EditorView, NSAccessibility.Notification) -> Void = {
     NSAccessibility.post(element: $0, notification: $1)
@@ -75,7 +78,13 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     super.init(frame: .zero)
     layout.replaceAll(with: document.snapshot.text)
     textChecker.reset(text: document.snapshot.text)
-    contextMenuAdditions = textCheckingMenuAdditions
+    inputAssistance.alternatives = NSMutableAttributedString(string: text)
+    contextMenuAdditions = textCheckingMenuAdditions + [
+      ContextMenuAddition(position: .top) { [weak self] request in
+        guard let self else { return [] }
+        return self.alternativeMenuItems(at: request.clickedIndex ?? self.selectedRange().location)
+      }
+    ]
     attach()
     setUpWritingTools()
     registerForDraggedTypes(Self.readableTypes)
@@ -104,6 +113,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     session = try! EditorSession(document: document)
     layout.replaceAll(with: document.snapshot.text)
     textChecker.reset(text: document.snapshot.text)
+    inputAssistance.reset()
+    inputAssistance.alternatives = NSMutableAttributedString(string: text)
     textVersion += 1
     attach()
     textDidChange(IndexSet(integersIn: 0..<document.snapshot.lineCount))
@@ -125,6 +136,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     let checks = !isTyping && [.edit, .undo, .redo].contains(event.kind)
     for batch in event.batches {
       trackWritingToolsContexts(batch, undoRedo: [.undo, .redo].contains(event.kind))
+      inputAssistance.apply(batch)
       layout.apply(batch)
       let changed = textChecker.apply(batch, typed: isTyping)
       if isTyping { typedRanges += changed }
@@ -136,7 +148,15 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     if !event.changes.isDisjoint(with: [.text, .composition, .lineTokens]) {
       textDidChange(event.retokenizedLines)
     }
-    if event.changes.contains(.selection) { textChecker.controller.didChangeSelectedRange() }
+    if !event.changes.isDisjoint(with: [.text, .selection, .composition]) {
+      inputAssistance.revision += 1
+      inputContext?.invalidateCharacterCoordinates()
+    }
+    if event.changes.contains(.selection) {
+      inputAssistance.wordSelection = false
+      textChecker.controller.didChangeSelectedRange()
+      inputContext?.textInputClientDidUpdateSelection()
+    }
     if event.changes.contains(.text) || event.changes.contains(.selection) {
       needsDisplay = true
       updateCarets()
@@ -360,11 +380,20 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     super.viewDidMoveToWindow()
     NotificationCenter.default.removeObserver(self)
     guard let window else { return }
+    if let scroll = enclosingScrollView {
+      NotificationCenter.default.addObserver(self, selector: #selector(inputScrollStarted),
+        name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+      NotificationCenter.default.addObserver(self, selector: #selector(inputScrollEnded),
+        name: NSScrollView.didEndLiveScrollNotification, object: scroll)
+    }
     for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
       NotificationCenter.default.addObserver(
         self, selector: #selector(keyStateDidChange), name: name, object: window)
     }
   }
+
+  @objc private func inputScrollStarted() { inputContext?.textInputClientWillStartScrollingOrZooming() }
+  @objc private func inputScrollEnded() { inputContext?.textInputClientDidEndScrollingOrZooming() }
 
   @objc private func keyStateDidChange() {
     needsDisplay = true
@@ -405,6 +434,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// 選択を置き換え、`primary` 番目を主にする。
   /// `beepsOnFailure` が false なら、断られても警告音を鳴らさない (利用者の操作でない選択)。
   func select(_ ranges: [NSRange], primary: Int, beepsOnFailure: Bool = true) {
+    inputAssistance.wordSelection = false
+    inputAssistance.revision += 1
     let change = { try self.session.setSelections(ranges.map(self.selection), primary: primary) }
     if beepsOnFailure { perform(change) } else { try? change() }
   }
@@ -483,7 +514,9 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   func type(_ text: String) {
-    perform { try session.type(text, historyGroup: "typing") }
+    withUndoName(standardUndoName(for: .typing)) {
+      perform { try session.type(text, historyGroup: "typing") }
+    }
   }
 
   /// 改行して、各キャレットの行頭の空白をそれぞれ引き継ぐ。
@@ -504,11 +537,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   override func doCommand(by selector: Selector) {
-    // 選択が一つなら Esc はウィンドウ側の閉じる操作などに回す。
-    // 自分に送り直すと受け取って何もしないので、次の応答者へ直接渡す。
-    if selector == #selector(cancelOperation(_:)), session.selections.count == 1 {
-      _ = nextResponder?.tryToPerform(selector, with: nil)
-    } else if responds(to: selector) {
+    if responds(to: selector) {
       perform(selector, with: nil)
     } else {
       super.doCommand(by: selector)
@@ -516,10 +545,12 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   override func cancelOperation(_ sender: Any?) {
-    guard session.selections.count > 1 else { return }
+    guard session.selections.count > 1 else { return complete(sender) }
     let primary = session.primarySelection
     perform { try session.setSelections([primary]) }
   }
+
+  override func complete(_ sender: Any?) { showCompletions() }
 
   override func moveLeft(_ sender: Any?) { perform { try session.move(.backward) } }
   override func moveRight(_ sender: Any?) { perform { try session.move(.forward) } }
@@ -649,10 +680,18 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   override func deleteBackward(_ sender: Any?) {
-    keepingKill { perform { try session.deleteBackward(historyGroup: "deleting") } }
+    withUndoName(standardUndoName(for: .typing)) {
+      if !smartDeleteSelection(forward: false) {
+        keepingKill { perform { try session.deleteBackward(historyGroup: "deleting") } }
+      }
+    }
   }
   override func deleteForward(_ sender: Any?) {
-    keepingKill { perform { try session.deleteForward(historyGroup: "deleting") } }
+    withUndoName("") {
+      if !smartDeleteSelection(forward: true) {
+        keepingKill { perform { try session.deleteForward(historyGroup: "deleting") } }
+      }
+    }
   }
   /// 直前の文字を正準分解し、最後の符号点だけを消す。`é` は `e` に、`한` は `하` になる。
   /// 分解しても符号点が一つなら、文字ごと消す。結果は合成し直さない (NSTextView と同じ)。
@@ -764,7 +803,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// 選択ごとに、`edit` が選択の番号と範囲から返す範囲を文字列で置き換える。nil を返した
   /// 選択と、前の範囲やほかの選択と重なる範囲は置き換えない。置き換えた選択は、入れた文字の
   /// 後ろのキャレットになる。
-  private func replaceEach(
+  func replaceEach(
     historyGroup: String? = nil, _ edit: (Int, NSRange) -> (range: NSRange, text: String)?
   ) {
     let edits = session.selections.indices.compactMap { index in
@@ -965,6 +1004,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     select(
       session.selections.map { wordRange(around: nsRange(of: $0.range)) },
       primary: session.primaryIndex)
+    inputAssistance.wordSelection = true
   }
 
   /// `selectWord:` が選ぶ範囲。単語の変換も同じ範囲に掛ける。
@@ -1047,7 +1087,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// 選択した範囲を消す。kill buffer にもクリップボードにも入れない。
   @objc func delete(_ sender: Any?) {
     guard session.selections.contains(where: { !$0.isEmpty }) else { return }
-    keepingKill { perform { try session.type("") } }
+    if !smartDeleteSelection() { keepingKill { perform { try session.type("") } } }
   }
 
   // MARK: - 取り消しとクリップボード
@@ -1073,13 +1113,16 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     guard !texts.isEmpty else { return }
     pasteboard.clearContents()
     pasteboard.setString(texts.joined(separator: "\n"), forType: .string)
+    if inputAssistance.wordSelection { pasteboard.setString("", forType: Self.smartPasteType) }
   }
 
   @objc func cut(_ sender: Any?) {
     // 変換中は消せないので、クリップボードも書き換えない。
     guard !hasMarkedText(), !selectedTexts.isEmpty else { return NSSound.beep() }
     writeSelection(to: .general)
-    perform { try session.type("") }
+    withUndoName(standardUndoName(for: .cut)) {
+      if !smartDeleteSelection() { perform { try session.type("") } }
+    }
   }
 
   @objc func paste(_ sender: Any?) {
@@ -1093,11 +1136,21 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     let string = Self.normalizingLineEndings(pasted)
     let count = session.selections.count
     let lines = string.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    perform {
-      if count > 1, lines.count == count {
-        try session.type(lines)
+    withUndoName(standardUndoName(for: .paste)) {
+      if smartInsertDeleteEnabled, pasteboard.types?.contains(Self.smartPasteType) == true {
+        let helper = inputReference()
+        replaceEach { index, range in
+          let inserted = count > 1 && lines.count == count ? lines[index] : string
+          var before: NSString?
+          var after: NSString?
+          helper.smartInsert(for: inserted, replacing: range, before: &before, after: &after)
+          return (range, (before as String? ?? "") + inserted + (after as String? ?? ""))
+        }
       } else {
-        try session.type(string)
+        perform {
+          if count > 1, lines.count == count { try session.type(lines) }
+          else { try session.type(string) }
+        }
       }
     }
   }
@@ -1113,8 +1166,12 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       return true
     }
     switch item.action {
-    case #selector(undo(_:)): return document.canUndo
-    case #selector(redo(_:)): return document.canRedo
+    case #selector(undo(_:)):
+      (item as? NSMenuItem)?.title = engineUndoManager.undoMenuItemTitle
+      return document.canUndo
+    case #selector(redo(_:)):
+      (item as? NSMenuItem)?.title = engineUndoManager.redoMenuItemTitle
+      return document.canRedo
     case #selector(copy(_:)): return !selectedTexts.isEmpty
     case #selector(cut(_:)), #selector(delete(_:)):
       return !hasMarkedText() && session.selections.contains { !$0.isEmpty }
@@ -1227,6 +1284,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     } else {
       select([range], primary: 0)
     }
+    inputAssistance.wordSelection = dragGranularity == .word
   }
 
   override func mouseDragged(with event: NSEvent) {
@@ -1273,6 +1331,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     let selection = Selection(
       anchor: position(of: backward ? end : start), head: position(of: backward ? start : end))
     perform { try session.setSelections(dragKept + [selection], primary: dragKept.count) }
+    inputAssistance.wordSelection = dragGranularity == .word
   }
 
   // MARK: - NSTextInputClient
@@ -1294,11 +1353,11 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   func insertText(_ string: Any, replacementRange: NSRange) {
     let text = self.string(from: string)
     if session.markedRange != nil {
-      commitComposition(text)
+      if commitComposition(text) { retainAlternatives(from: string, insertedText: text) }
       return
     }
     let primary = nsRange(of: session.primarySelection.range)
-    typing {
+    let inserted = typing {
       if let widening = widening(of: replacementRange, around: primary) {
         if widening != (0, 0) {
           // 本文の端や文字の途中にはみ出すキャレットは広げずに置く。
@@ -1315,6 +1374,10 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         try session.setSelections([try selection(replacementRange)])
       }
       try session.type(text, historyGroup: "typing")
+    }
+    if inserted {
+      retainAlternatives(from: string, insertedText: text)
+      requestInlineCandidates()
     }
   }
 
@@ -1352,7 +1415,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   @discardableResult
   func commitComposition(_ text: String? = nil) -> Bool {
     let marked = session.markedRanges.map { nsRange(of: $0) }
-    guard perform({ try session.commitComposition(text) }) else { return false }
+    guard perform({ try session.commitComposition(text, historyActionName: standardUndoName(for: .typing)) }) else { return false }
+    requestInlineCandidates()
     // 確定した後の各キャレットは、確定した文字の後ろにある。確定した文字は、変換していた範囲の
     // 先頭からキャレットまで。前の範囲で長さが変わった分だけ、後ろの範囲の先頭がずれる。
     let heads = session.selections.map { offset(of: $0.head) }
@@ -1384,6 +1448,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     let ranges = typedRanges
     typedRanges = []
     guard typed else { return false }
+    if !ranges.isEmpty { document.setUndoActionName(standardUndoName(for: .typing)) }
     textChecker.insertedText(in: ranges.filter { $0.length > 0 })
     // 打鍵の経路で文字を消しただけの範囲 (入力メソッドが空の文字を入れた場合など) は検査し直す。
     ranges.filter { $0.length == 0 }.forEach(textChecker.checkSpelling(in:))
@@ -1405,7 +1470,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     let clamped = NSIntersectionRange(range, full)
     guard range.location != NSNotFound, range.location <= full.length else { return nil }
     actualRange?.pointee = clamped
-    return layout.storage.attributedSubstring(from: clamped)
+    return attributedString().attributedSubstring(from: clamped)
   }
 
   func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }

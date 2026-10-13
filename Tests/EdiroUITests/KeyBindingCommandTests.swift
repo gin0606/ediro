@@ -355,9 +355,6 @@ extension AppKitTests {
       "toggleBaseWritingDirection:", "quickLookPreviewItems:", "toggleQuickLookPreviewPanel:",
     ]
 
-    /// 別の作業で実装するもの: 補完は他の入力支援と合わせて実装する。実装したらここから外す。
-    static let implementedElsewhere: Set<String> = ["complete:"]
-
     /// その型が自分で実装しているか。NSView から継承しただけの応答は数えない。
     private func implements(_ type: AnyClass, _ selector: Selector) -> Bool {
       guard let own = class_getInstanceMethod(type, selector).map(method_getImplementation) else {
@@ -366,7 +363,7 @@ extension AppKitTests {
       return own != class_getInstanceMethod(NSView.self, selector).map(method_getImplementation)
     }
 
-    @Test func 応答するセレクタの差は実装しないものと別の作業のものだけ() throws {
+    @Test func 応答するセレクタの差は実装しないものだけ() throws {
       let proto = try #require(objc_getProtocol("NSStandardKeyBindingResponding"))
       var selectors: [Selector] = []
       for required in [true, false] {
@@ -386,7 +383,7 @@ extension AppKitTests {
       let missing = Set(
         selectors.filter { implements(NSTextView.self, $0) && !implements(EditorView.self, $0) }
           .map(NSStringFromSelector))
-      #expect(missing == Self.notImplemented.union(Self.implementedElsewhere))
+      #expect(missing == Self.notImplemented)
       let extra = Set(
         selectors.filter { !implements(NSTextView.self, $0) && implements(EditorView.self, $0) }
           .map(NSStringFromSelector))

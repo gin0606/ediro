@@ -369,7 +369,7 @@ func replacedStarts(_ ranges: [Range<Int>], lengths: [Int]) -> [Int] {
         }, primary: primary)
         document.emit(.composition, batches: prepared.changes.isEmpty ? [] : [prepared.changes])
     }
-    public func commitComposition(_ text: String? = nil) throws {
+    public func commitComposition(_ text: String? = nil, historyActionName: String? = nil) throws {
         try ensureMutable(); guard composition != nil else { throw EditorError.noComposition }
         Callbacks.beginOperation(); defer { Callbacks.endOperation() }
         if let text { try updateComposition(text) }
@@ -379,7 +379,10 @@ func replacedStarts(_ ranges: [Range<Int>], lengths: [Int]) -> [Int] {
         // A composition that restores the replaced text is a no-op and adds no history.
         let snapshot = document.snapshot
         let restored = try zip(state.ranges, state.replacedTexts).allSatisfy { try snapshot.text(in: $0).utf16.elementsEqual($1.utf16) }
-        if !state.batches.isEmpty, !restored { document.record(before: state.beforeRoot, selections: state.beforeSelections, batches: state.batches, group: nil) }
+        if !state.batches.isEmpty, !restored {
+            document.record(before: state.beforeRoot, selections: state.beforeSelections, batches: state.batches, group: nil)
+            if let historyActionName { document.setUndoActionName(historyActionName) }
+        }
         document.emit(.composition)
     }
     public func cancelComposition() throws {

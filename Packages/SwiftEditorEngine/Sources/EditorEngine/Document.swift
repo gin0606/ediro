@@ -53,6 +53,7 @@ struct HistoryEntry {
     var beforeSelections: [UUID: SelectionState]
     var afterSelections: [UUID: SelectionState]
     var group: String?
+    var actionName: String = ""
 }
 @MainActor final class WeakEditor {
     weak var value: EditorSession?
@@ -158,6 +159,14 @@ func inverse(_ changes: [ContentChange]) -> [ContentChange] {
     public var snapshot: TextSnapshot {
         TextSnapshot(documentID: id, instanceID: instanceID, language: language, version: version, endOfLine: endOfLine, root: root)
     }
+    /// The presentation name follows its undo entry through undo and redo.
+    public var undoActionName: String { undoEntries.last?.actionName ?? "" }
+    public var redoActionName: String { redoEntries.last?.actionName ?? "" }
+    public func setUndoActionName(_ name: String) {
+        guard !undoEntries.isEmpty else { return }
+        undoEntries[undoEntries.count - 1].actionName = name
+    }
+
     public var canUndo: Bool { !undoEntries.isEmpty && !isDisposed && compositionOwner == nil }
     public var canRedo: Bool { !redoEntries.isEmpty && !isDisposed && compositionOwner == nil }
     var liveEditors: [EditorSession] {

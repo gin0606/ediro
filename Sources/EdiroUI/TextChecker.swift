@@ -1,5 +1,6 @@
 import AppKit
 import EditorEngine
+import TextCheckingBridge
 
 /// スペルと文法の検査と自動置換の入切。どれもその起動の間だけ持ち、保存しない。
 ///
@@ -26,15 +27,14 @@ struct TextCheckingSettings: Equatable {
 /// 本文と同じ文字列を持つ別の属性付き文字列 `annotations` に持つ。写しの属性は Markdown の装飾が
 /// 当て直すので、そこに持つと装飾のたびに消える。下線は TextKit 2 の rendering attribute で描く。
 ///
-/// 自動スペル修正、スマートコピー/ペースト、スマートリンク、データ検出は入切の値だけを持ち、
-/// コントローラには常にオフと伝える。入力への効果は持たない。
+/// 自動スペル修正は旧版の棚卸しで無効だったため、入切だけを持つ。
 ///
 /// NSTextCheckingClient は NSView が別の意味で持つ `candidateListTouchBarItem` を要求し、Swift の
 /// NSView の派生型では採用できない。そのため、ビューとは別のこの型がクライアントになる。
-final class TextChecker: NSObject {
+final class TextChecker: TextCheckingAnnotationClient {
   private weak var view: EditorView?
   private(set) var controller: NSTextCheckingController!
-  /// 本文と同じ文字列に、コントローラが付けた注釈 (値はどれも文字列) だけを持つ。
+  /// 本文と同じ文字列に、コントローラが付けた注釈だけを持つ。
   private(set) var annotations = NSMutableAttributedString()
   var settings = TextCheckingSettings()
   /// コントローラが本文を書き換えている間は、その変更をコントローラに知らせ直さない。
@@ -328,9 +328,9 @@ final class TextChecker: NSObject {
   }
 
   /// 入切をオフにした後に届いた、オフにする前に頼んだ検査の結果の印を捨てる。
-  private func allowed(_ annotations: [NSAttributedString.Key: String]) -> [NSAttributedString.Key: String] {
+  private func allowed(_ annotations: [NSAttributedString.Key: Any]) -> [NSAttributedString.Key: Any] {
     let grammar = NSAttributedString.SpellingState.grammar.rawValue
-    guard let state = annotations[.spellingState].flatMap(Int.init) else { return annotations }
+    guard let state = (annotations[.spellingState] as? String).flatMap(Int.init) else { return annotations }
     var kept = state
     if !settings.continuousSpellChecking, !allowsRequestedMarks { kept = 0 }
     if !settings.grammarChecking { kept &= ~grammar }
@@ -364,6 +364,15 @@ final class TextChecker: NSObject {
       let location = min(range.location, full.length)
       target = (annotations.mutableString as NSString).paragraphRange(
         for: NSRange(location: location, length: min(range.length, full.length - location)))
+    }
+    if let textRange = layout.textRange(target) {
+      for key in [NSAttributedString.Key.link, NSAttributedString.Key("NSDataDetection")] {
+        layout.layoutManager.removeRenderingAttribute(key, for: textRange)
+        annotations.enumerateAttribute(key, in: target) { value, range, _ in
+          guard let value, let run = layout.textRange(range) else { return }
+          layout.layoutManager.addRenderingAttribute(key, value: value, for: run)
+        }
+      }
     }
     var marks: [(NSRange, Int)] = []
     let states = NSAttributedString.SpellingState.spelling.rawValue
@@ -407,15 +416,10 @@ extension TextChecker: NSTextCheckingClient {
     return annotations.attributedSubstring(from: paragraphs)
   }
 
-  func setAnnotations(_ annotations: [NSAttributedString.Key: String], range: NSRange) {
-    guard let range = adjusted(range), range.length > 0 else { return }
-    self.annotations.setAttributes(allowed(annotations), range: range)
-    annotationsDidChange(in: range)
-  }
-
-  func addAnnotations(_ annotations: [NSAttributedString.Key: String], range: NSRange) {
-    guard let range = adjusted(range), range.length > 0 else { return }
-    self.annotations.addAttributes(allowed(annotations), range: range)
+  override func receiveAnnotations(_ annotations: [NSAttributedString.Key: Any], range: NSRange, replacing: Bool) {
+    guard let range = adjusted(range) else { return }
+    if replacing { self.annotations.setAttributes(allowed(annotations), range: range) }
+    else { self.annotations.addAttributes(allowed(annotations), range: range) }
     annotationsDidChange(in: range)
   }
 
@@ -459,9 +463,8 @@ extension TextChecker: NSTextCheckingClient {
       annotatedString.enumerateAttributes(
         in: NSRange(location: 0, length: min(annotatedString.length, inserted.length))
       ) { attributes, run, _ in
-        let strings = attributes.compactMapValues { $0 as? String }
         annotations.addAttributes(
-          allowed(strings),
+          allowed(attributes),
           range: NSRange(location: inserted.location + run.location, length: run.length))
       }
     }
@@ -530,21 +533,28 @@ extension TextChecker: NSTextCheckingClient {
     set { update(newValue) { $0.isAutomaticSpellingCorrectionEnabled = $1 } }
   }
   var smartInsertDeleteType: NSTextInputTraitType {
-    get { .no }
+    get { trait(settings.smartInsertDelete) }
     set { update(newValue) { $0.smartInsertDeleteEnabled = $1 } }
   }
   var dataDetectionType: NSTextInputTraitType {
-    get { .no }
+    get { trait(settings.dataDetection) }
     set { update(newValue) { $0.isAutomaticDataDetectionEnabled = $1 } }
   }
   var linkDetectionType: NSTextInputTraitType {
-    get { .no }
+    get { trait(settings.linkDetection) }
     set { update(newValue) { $0.isAutomaticLinkDetectionEnabled = $1 } }
   }
-  /// テキスト補完は、この型が入切を持たない。
   var textCompletionType: NSTextInputTraitType {
-    get { .no }
-    set {}
+    get { view?.textCompletionType ?? .default }
+    set { view?.textCompletionType = newValue }
+  }
+  var inlinePredictionType: NSTextInputTraitType {
+    get { view?.inlinePredictionType ?? .default }
+    set { view?.inlinePredictionType = newValue }
+  }
+  var mathExpressionCompletionType: NSTextInputTraitType {
+    get { view?.mathExpressionCompletionType ?? .default }
+    set { view?.mathExpressionCompletionType = newValue }
   }
 
   /// Writing Tools の扱いは、ビューの Writing Tools のコーディネータの値を伝える。エディタ

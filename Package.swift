@@ -8,6 +8,7 @@ let package = Package(
     .package(path: "Packages/SwiftEditorEngine")
   ],
   targets: [
+    .target(name: "TextCheckingBridge"),
     .target(
       name: "EdiroCore",
       dependencies: [.product(name: "EditorMarkdown", package: "SwiftEditorEngine")],
@@ -16,7 +17,7 @@ let package = Package(
     .target(
       name: "EdiroUI",
       dependencies: [
-        "EdiroCore",
+        "EdiroCore", "TextCheckingBridge",
         .product(name: "EditorEngine", package: "SwiftEditorEngine"),
         .product(name: "EditorMarkdown", package: "SwiftEditorEngine"),
       ],
