@@ -193,7 +193,8 @@ extension AppKitTests {
       #expect(!marks(view).isEmpty)
     }
 
-    @Test func 文法の誤りは入力中の検査と文法の検査が両方オンのときだけ印を付ける() async {
+    @Test func 文法の誤りは入力中の検査と文法の検査が両方オンのときだけ印を付ける() async throws {
+      try await requireGrammarCheckingAvailable()
       let text = "He go to school yesterday and they is happy. "
       let verb = (text as NSString).range(of: "go")
       let grammar = NSAttributedString.SpellingState.grammar.rawValue

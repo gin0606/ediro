@@ -4,7 +4,8 @@ import Testing
 
 @Suite(.serialized)
 struct InputAssistanceTests {
-  @Test func completionCandidatesMatchReference() {
+  @Test func completionCandidatesMatchReference() async throws {
+    try await requireCompletionsAvailable()
     let reference = ReferenceTextView(text: "hel")
     defer { reference.close() }
     let view = EditorView(text: "hel")
@@ -21,15 +22,22 @@ struct InputAssistanceTests {
     view.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
     #expect(view.inputAssistance.completionCandidates == expected)
     #expect(view.text == "hel")
-    view.select([NSRange(location: 1, length: 0), NSRange(location: 3, length: 0)], primary: 1)
-    view.inputAssistance.completionCandidates = []
-    view.cancelOperation(nil)
+  }
+
+  @Test func cancelWithMultipleSelectionsKeepsOnlyThePrimary() {
+    let view = EditorView(text: "hel")
+    // 主を真ん中に置き、先頭や末尾の選択を残す誤りでも落ちるようにする。
+    view.select(
+      [0, 1, 3].map { NSRange(location: $0, length: 0) }, primary: 1)
+    view.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
     #expect(view.session.selections.count == 1)
-    #expect(view.selectedRange() == NSRange(location: 3, length: 0))
+    #expect(view.selectedRange() == NSRange(location: 1, length: 0))
+    // 選択を減らすだけで、補完は出さない。
     #expect(view.inputAssistance.completionCandidates.isEmpty)
   }
 
-  @Test func completionKeyBindings() throws {
+  @Test func completionKeyBindings() async throws {
+    try await requireCompletionsAvailable()
     let view = EditorView(text: "hel")
     view.select([NSRange(location: 3, length: 0)], primary: 0)
     for (characters, keyCode, modifiers) in [("\u{1b}", UInt16(53), NSEvent.ModifierFlags()),
@@ -263,7 +271,8 @@ extension InputAssistanceTests {
     return window
   }
 
-  @Test func completionAcceptanceAndStaleResults() throws {
+  @Test func completionAcceptanceAndStaleResults() async throws {
+    try await requireCompletionsAvailable()
     for change in ["accept", "cancel", "edit", "selection", "composition"] {
       let view = EditorView(text: "hel world")
       let window = mounted(view)

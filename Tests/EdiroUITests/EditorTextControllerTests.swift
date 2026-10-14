@@ -402,7 +402,7 @@ extension AppKitTests {
       #expect(emoji.text == "x😀é\naéc\ntail")
     }
 
-    @Test func 選択が一つならEscを次の応答者に渡さず補完する() {
+    @Test func 選択が一つならEscを次の応答者に渡さない() {
       final class Receiver: NSResponder {
         var cancelled = false
         override func cancelOperation(_ sender: Any?) { cancelled = true }
@@ -413,7 +413,7 @@ extension AppKitTests {
       view.nextResponder = receiver
       view.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
       #expect(!receiver.cancelled)
-      #expect(!view.inputAssistance.completionCandidates.isEmpty)
+      #expect(view.text == "hel")
     }
 
     @Test func 変換中の切り取りはクリップボードも本文も変えない() {

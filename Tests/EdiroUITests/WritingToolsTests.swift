@@ -1067,6 +1067,7 @@ extension AppKitTests {
     private func editorWithGrammarMark(_ text: String, issue: String) async throws -> (
       NSWindow, EditorView, NSRange
     ) {
+      try await requireGrammarCheckingAvailable()
       let (window, view) = makeEditor(text: text)
       let range = (text as NSString).range(of: issue)
       view.select([NSRange(location: (text as NSString).length, length: 0)], primary: 0)
