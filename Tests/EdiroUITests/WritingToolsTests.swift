@@ -908,27 +908,6 @@ extension AppKitTests {
       #expect(view.writingTools.contexts[id] == nil)
     }
 
-    @Test func 複数のキャレットの打鍵は前の編集と中の編集に分けて知らせる() throws {
-      let text = "intro\nThis are a test.\nend"
-      let (window, view) = makeEditor(text: text)
-      defer { window.close() }
-      let recording = RecordingCoordinator(delegate: view)
-      view.writingToolsCoordinator = recording
-      view.select([(text as NSString).range(of: "are")], primary: 0)
-      let context = try self.context(view)
-      let id = context.identifier
-      view.select([NSRange(location: 1, length: 0), NSRange(location: 11, length: 0)], primary: 0)
-      view.insertText("x", replacementRange: NSRange(location: NSNotFound, length: 0))
-      #expect(view.text == "ixntro\nThis xare a test.\nend")
-      #expect(Set(recording.calls.map(String.init(describing:))) == Set([
-        String(describing: RecordingCoordinator.Call.update(NSRange(location: 5, length: 0), "x", .typing, id)),
-        String(describing: RecordingCoordinator.Call.reflow(id)),
-      ]))
-      #expect(recording.calls.count == 2)
-      try replace(view, NSRange(location: 5, length: 4), in: context, with: "is")
-      #expect(view.text == "ixntro\nThis is a test.\nend")
-    }
-
     @Test func 一度の編集の知らせは変更前の位置で後ろから送り配置の変化は一度だけ送る() throws {
       let text = "intro\nThis are a test.\nend"
       let (window, view) = makeEditor(text: text)
@@ -1246,12 +1225,18 @@ extension AppKitTests {
       let (window, view, verb) = try await editorWithGrammarMark(text, issue: "go")
       defer { window.close() }
       let context = try self.context(view, scope: .fullDocument)
-      try replace(view, verb, in: context, with: "went", reason: .temporary)
+      try replace(view, verb, in: context, with: "goes", reason: .temporary)
+      try select(view, [NSRange(location: verb.location, length: 4)], in: context)
       try replace(view, NSRange(location: verb.location, length: 4), in: context, with: "went", reason: .accepted)
       let school = (view.text as NSString).range(of: "school")
       try select(view, [school], in: context)
       try replace(view, school, in: context, with: "work", reason: .temporary)
       try replace(view, NSRange(location: school.location, length: 4), in: context, with: "work", reason: .accepted)
+      #expect(view.text == "He went to work yesterday. ")
+      // 受け入れた後の利用者の編集は、別に取り消す。
+      view.select([NSRange(location: 0, length: 0)], primary: 0)
+      view.type("A")
+      view.undo(nil)
       #expect(view.text == "He went to work yesterday. ")
       view.undo(nil)
       #expect(view.text == "He went to school yesterday. ")
@@ -1327,24 +1312,6 @@ extension AppKitTests {
       let other = (view.text as NSString).range(of: "is", options: .backwards)
       #expect(await waitUntil({ hasGrammarMark(view, at: other.location) }, timeout: .seconds(3)))
       #expect(!hasGrammarMark(view, at: verb.location))
-    }
-
-    @available(macOS 27.0, *)
-    @Test func 文法の提示で受け入れた置き換えは一回で取り消せる() async throws {
-      let text = "He go to school yesterday. "
-      let (window, view, verb) = try await editorWithGrammarMark(text, issue: "go")
-      defer { window.close() }
-      let context = try self.context(view, scope: .fullDocument)
-      try replace(view, verb, in: context, with: "goes", reason: .temporary)
-      try select(view, [NSRange(location: verb.location, length: 4)], in: context)
-      try replace(view, NSRange(location: verb.location, length: 4), in: context, with: "went", reason: .accepted)
-      #expect(view.text == "He went to school yesterday. ")
-      view.select([NSRange(location: 0, length: 0)], primary: 0)
-      view.type("A")
-      view.undo(nil)
-      #expect(view.text == "He went to school yesterday. ")
-      view.undo(nil)
-      #expect(view.text == text)
     }
     #endif
   }

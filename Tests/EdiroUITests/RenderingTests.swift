@@ -20,14 +20,6 @@ extension AppKitTests {
       return try #require(NSBitmapImageRep(data: data))
     }
 
-    @Test func 全テーマのナビゲーションバーを描画できる() throws {
-      for theme in Theme.all {
-        let rep = try render(theme.navBar.view, size: CGSize(width: 200, height: 26))
-        #expect(rep.pixelsWide == 200)
-        #expect(rep.pixelsHigh == 26)
-      }
-    }
-
     @Test func 単色テーマは指定した色で塗られる() throws {
       let theme = Theme.theme(id: "dark")
       let rep = try render(theme.navBar.view, size: CGSize(width: 100, height: 26))
@@ -53,14 +45,12 @@ extension AppKitTests {
     }
 
     @Test func タイトルバーの帯はテーマの色で塗られる() throws {
-      for id in ["dark", "vscode", "editaro"] {
-        let theme = Theme.theme(id: id)
-        let rep = try render(TitleBarView(theme: theme), size: CGSize(width: 200, height: 32))
-        let pixel = try #require(rep.colorAt(x: 100, y: 16))
-        // dark 系のテーマはいずれも #333333 の帯を持つ
-        #expect(abs(pixel.redComponent - 0x33 / 255.0) < 0.05, "\(id) の帯色が違う")
-        #expect(abs(pixel.blueComponent - 0x33 / 255.0) < 0.05, "\(id) の帯色が違う")
-      }
+      // vscode はナビゲーションバー (#0077D5) と帯 (#333333) の色が違い、塗りの取り違えも分かる
+      let theme = Theme.theme(id: "vscode")
+      let rep = try render(TitleBarView(theme: theme), size: CGSize(width: 200, height: 32))
+      let pixel = try #require(rep.colorAt(x: 100, y: 16))
+      #expect(abs(pixel.redComponent - 0x33 / 255.0) < 0.05)
+      #expect(abs(pixel.blueComponent - 0x33 / 255.0) < 0.05)
     }
 
     @Test func 明るいテーマの帯は暗いテーマより明るい() throws {

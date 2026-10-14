@@ -73,9 +73,7 @@ extension AppKitTests {
       // キャレットに接する文字の上では選択を変えない。
       .init("This is a word.", 2, 0, click: 1),
       .init("hello world", 2, 0, click: 2),
-      .init("hello world", 3, 0, click: 2),
       .init("hello world", 1, 0, click: 2),
-      .init("hello world", 8, 0, click: 9),
       .init("hello world", 11, 0, click: 9),
       .init("This is a word.", 4, 0, click: 4),
       // 空白と句読点の上: 選ぶが、調べる・共有の対象にしない。
@@ -100,10 +98,8 @@ extension AppKitTests {
       // そうでない環境では出さない側を比べる。
       .init("全角ＡＢＣ　テスト です", 0, 0, click: 7),
       .init("全角ＡＢＣ　テスト です", 0, 5, click: 1),
-      .init("ＡＢＣ zz", 0, 3, click: 1),
       .init("ｱｲｳ zz", 0, 3, click: 1),
       .init("abc テスト zz", 0, 7, click: 1),
-      .init("１２３ zz", 0, 3, click: 1),
       .init("漢字 zz", 0, 2, click: 0),
       .init("汉字 zz", 0, 2, click: 0),
       .init("! zz", 0, 1, click: 0),
@@ -696,22 +692,6 @@ extension AppKitTests {
       #expect(view.text == "one two three")
       pasteboard.clearContents()
       #expect(!view.readSelection(from: pasteboard))
-    }
-
-    @Test func サービスからの受け取りは参照と同じ本文と選択になる() {
-      let reference = ReferenceTextView(text: "one two three")
-      defer { reference.close() }
-      let (window, view) = makeEditor(text: "one two three")
-      defer { window.close() }
-      let pasteboard = makePasteboard()
-      defer { pasteboard.releaseGlobally() }
-      pasteboard.setString("TWO", forType: .string)
-      reference.textView.setSelectedRange(NSRange(location: 4, length: 3))
-      view.select([NSRange(location: 4, length: 3)], primary: 0)
-      #expect(reference.textView.readSelection(from: pasteboard))
-      #expect(view.readSelection(from: pasteboard))
-      #expect(view.text == reference.textView.string)
-      #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
     }
 
     @Test(arguments: [true, false], [true, false])

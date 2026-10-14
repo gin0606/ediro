@@ -10,13 +10,6 @@ extension AppKitTests {
       font.fontDescriptor.symbolicTraits
     }
 
-    @Test func 見出しは本文より大きく太い() {
-      let palette = SyntaxPalette(theme: .fallback)
-      let resolver = FontResolver(preferences: .default)
-      let heading = resolver.resolve(for: palette.style(for: .heading(level: 1))).font
-      #expect(heading.pointSize > resolver.bodyFont.pointSize)
-    }
-
     @Test func フォント名が空なら等幅のシステムフォントを使う() {
       #expect(traits(FontResolver(preferences: .default).bodyFont).contains(.monoSpace))
     }

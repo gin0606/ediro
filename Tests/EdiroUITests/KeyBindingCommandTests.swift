@@ -814,11 +814,13 @@ extension AppKitTests {
     }
 
     @Test(arguments: ["word ", "😀", "a\u{301}"])
-    func 折り返し行末の状態は既存の削除範囲を変えない(unit: String) {
+    func 折り返し行末の状態は既存の削除範囲を変えない(unit: String) throws {
       let text = String(repeating: unit, count: 40)
       let view = makeEditor(text: text, width: 200)
       let ordinary = makeEditor(text: text, width: 200)
       view.moveToEndOfLine(nil)
+      // 文書の末尾まで折り返さずに届くと、どちらも何も消さずに通ってしまう。
+      try #require(view.selectedRange().location < (text as NSString).length)
       ordinary.select([view.selectedRange()], primary: 0)
       view.deleteToEndOfLine(nil)
       ordinary.deleteToEndOfLine(nil)

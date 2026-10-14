@@ -28,8 +28,10 @@ private func makeStore() -> DocumentStore {
 @Test func 保存先はバンドル名から分かれる() {
   #expect(
     DocumentStore.directoryName(bundleName: "Ediro", bundleIdentifier: "me.gin0606.ediro")
-      != DocumentStore.directoryName(
-        bundleName: "Ediro Dev", bundleIdentifier: "me.gin0606.ediro.dev"))
+      == "Ediro")
+  #expect(
+    DocumentStore.directoryName(bundleName: "Ediro Dev", bundleIdentifier: "me.gin0606.ediro.dev")
+      == "Ediro Dev")
 }
 
 @Test func バンドル名が無ければ識別子を使う() {

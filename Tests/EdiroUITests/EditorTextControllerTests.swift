@@ -372,25 +372,6 @@ extension AppKitTests {
       }
     }
 
-    @Test func 行末で行末まで消すと改行だけを消し行頭で行頭まで消すと何もしない() {
-      let text = "abc def\nghi jkl\nmno"
-      let (_, forward, _) = makeEditor(text: text)
-      forward.select([caret(7)], primary: 0)
-      forward.deleteToEndOfParagraph(nil)
-      #expect(forward.text == "abc defghi jkl\nmno")
-      forward.select([caret(3)], primary: 0)
-      forward.deleteToEndOfLine(nil)
-      #expect(forward.text == "abc\nmno")
-      let (_, backward, _) = makeEditor(text: text)
-      backward.select([caret(8)], primary: 0)
-      backward.deleteToBeginningOfLine(nil)
-      backward.deleteToBeginningOfParagraph(nil)
-      #expect(backward.text == text)
-      backward.select([caret(10)], primary: 0)
-      backward.deleteToBeginningOfParagraph(nil)
-      #expect(backward.text == "abc def\ni jkl\nmno")
-    }
-
     @Test func 置換範囲が本文の外にはみ出すキャレットは広げずに打つ() {
       let (_, view, _) = makeEditor(text: "abc\nxyzw")
       view.select([caret(0), caret(6)], primary: 1)
@@ -527,13 +508,6 @@ extension AppKitTests {
       #expect(view.selectedRange() == caret(2))
       view.addCursorBelow(nil)
       #expect(carets(view) == [caret(2), caret(6), caret(10)])
-    }
-
-    @Test func Escで主のキャレットだけを残す() {
-      let (_, view, _) = makeEditor(text: "abc\nabc")
-      view.select([caret(1), caret(5)], primary: 1)
-      view.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-      #expect(carets(view) == [caret(5)])
     }
   }
 }

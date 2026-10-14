@@ -62,10 +62,8 @@ extension AppKitTests {
 
     nonisolated static let substitutionScenarios: [SubstitutionScenario] = [
       .init(input: "\"a\" it's a--b "),
-      .init(quotes: true, input: "\"a\" it's "),
       .init(quotes: true, input: "He said \"hi 'there'\" and left. "),
       .init(quotes: true, input: "'90s rock\n\"x\"\n"),
-      .init(dashes: true, input: "a--b "),
       .init(dashes: true, input: "one -- two --- three - four\n"),
       .init(quotes: true, dashes: true, input: "\"a--b\" it's "),
     ]
@@ -338,21 +336,6 @@ extension AppKitTests {
       view.undo(nil)
       #expect(view.text == text)
       #expect(reference.textView.string == text)
-    }
-
-    @Test func スペルパネルの無視は送り手の単語をこの文書で誤りとしない() async throws {
-      let word = "zqxwvpanelirox"
-      let text = "Some \(word) here."
-      let range = (text as NSString).range(of: word)
-      let (window, view) = makeEditor(text: text)
-      defer { window.close() }
-      view.isContinuousSpellCheckingEnabled = true
-      #expect(await waitUntil({ marks(view)[range] != nil }, timeout: .seconds(3)))
-      view.select([range], primary: 0)
-      view.ignoreSpelling(spellingPanelStandIn(word))
-      let tag = view.textChecker.controller.spellCheckerDocumentTag
-      #expect(NSSpellChecker.shared.ignoredWords(inSpellDocumentWithTag: tag)?.contains(word) == true)
-      #expect(await waitUntil({ marks(view).isEmpty }, timeout: .seconds(3)))
     }
 
     // MARK: - 入切
@@ -756,7 +739,7 @@ extension AppKitTests {
       #expect(view.text == "xa—b c--d")
     }
 
-    @Test func 本文を差し替えても無視した単語は誤りとしない() async throws {
+    @Test func スペルパネルで無視した単語は本文を差し替えてもこの文書で誤りとしない() async throws {
       let word = "zqxwvresetirox"
       let text = "Some \(word) here."
       let range = (text as NSString).range(of: word)
@@ -766,6 +749,8 @@ extension AppKitTests {
       #expect(await waitUntil({ marks(view)[range] != nil }, timeout: .seconds(3)))
       view.select([range], primary: 0)
       view.ignoreSpelling(spellingPanelStandIn(word))
+      let tag = view.textChecker.controller.spellCheckerDocumentTag
+      #expect(NSSpellChecker.shared.ignoredWords(inSpellDocumentWithTag: tag)?.contains(word) == true)
       #expect(await waitUntil({ marks(view).isEmpty }, timeout: .seconds(3)))
       view.replaceText("Other \(word) and wrod.")
       let other = ("Other \(word) and wrod." as NSString).range(of: "wrod")

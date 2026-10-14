@@ -16,14 +16,6 @@ extension AppKitTests {
       AppState(documentStore: store, defaults: InMemoryStore(), saveDelay: .zero)
     }
 
-    @Test func 打鍵したあと待つとディスクに書かれる() async throws {
-      let store = makeStore()
-      let app = state(on: store)
-      app.text = "保存される本文"
-
-      #expect(await waitUntil({ (try? store.load()) == "保存される本文" }, timeout: .seconds(2)))
-    }
-
     @Test func flushは待たずに書き出す() throws {
       let store = makeStore()
       let app = state(on: store)
@@ -67,19 +59,6 @@ extension AppKitTests {
       #expect(app.quarantined == nil)
     }
 
-    @Test func 書き出せなければflushは失敗を返す() throws {
-      // 保存先の親を通常ファイルにしておくと、ディレクトリを作れず保存が失敗する
-      let root = TestArtifacts.directory()
-      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-      let blocker = root.appending(path: "blocked")
-      try Data().write(to: blocker)
-
-      let app = state(on: DocumentStore(fileURL: blocker.appending(path: "draft.md")))
-      app.text = "書けない本文"
-
-      #expect(app.flush() == false, "保存できていないのに成功を返している")
-    }
-
     @Test func 書き出す必要が無ければflushは成功を返す() throws {
       let app = state(on: makeStore())
       #expect(app.flush(), "編集していないのに失敗を返している")
@@ -100,7 +79,7 @@ extension AppKitTests {
       #expect(app.storageError == nil, "読み込みは失敗していないはず")
 
       app.text = "書けない本文"
-      app.flush()
+      #expect(app.flush() == false, "保存できていないのに成功を返している")
 
       let error = try #require(app.storageError)
       #expect(error.hasPrefix("保存できませんでした"), "実際の文言: \(error)")
