@@ -227,19 +227,25 @@ extension EditorView: NSServicesMenuRequestor {
   ) { $0.applyingTransform(StringTransform("Hant-Hans"), reverse: false) ?? $0 }
 
   private static let caseTransformations = [uppercase, lowercase, capitalize]
-  private static let scriptTransformations = [
-    fullWidth, halfWidth, traditionalChinese, simplifiedChinese,
-  ]
+  private static let widthTransformations = [fullWidth, halfWidth]
+  private static let chineseTransformations = [traditionalChinese, simplifiedChinese]
+
+  /// 優先する言語に日本語があるか。NSTextView は、このときだけ全角・半角の変換を出す。
+  private static var prefersJapanese: Bool {
+    Locale.preferredLanguages.contains { Locale(identifier: $0).language.languageCode == .japanese }
+  }
 
   /// 選択に効く変換だけを並べる。大文字・小文字は大文字と小文字の区別がある文字を含む
-  /// ときだけ、全角・半角・繁体・簡体はその変換で文字が変わるときだけ出す (NSTextView と同じ)。
+  /// ときだけ、全角・半角・繁体・簡体はその変換で文字が変わるときだけ出す。全角・半角は
+  /// 優先する言語に日本語が無ければ出さない (いずれも NSTextView と同じ)。
   private func transformationsItem() -> NSMenuItem? {
     let selected = selectedTexts.joined(separator: "\n")
     guard !selected.isEmpty else { return nil }
     let cased = selected.uppercased() != selected.lowercased()
+    let scripts = (Self.prefersJapanese ? Self.widthTransformations : []) + Self.chineseTransformations
     let applicable =
       (cased ? Self.caseTransformations : [])
-      + Self.scriptTransformations.filter { $0.apply(selected) != selected }
+      + scripts.filter { $0.apply(selected) != selected }
     guard !applicable.isEmpty else { return nil }
     let submenu = NSMenu()
     for transformation in applicable {
