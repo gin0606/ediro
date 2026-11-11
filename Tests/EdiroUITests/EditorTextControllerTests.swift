@@ -221,6 +221,42 @@ extension AppKitTests {
       #expect(view.selectedRange() == caret(6))
     }
 
+    @Test func 編集した行のURLの下線が取り消しとやり直しにも追従する() {
+      let plain = "first\nsee example.com/ab now"
+      let (_, view, state) = makeEditor(text: plain)
+      func underlined() -> [NSRange] { underlinedRanges(view.layout.storage) }
+      #expect(underlined().isEmpty)
+      view.select([caret(10)], primary: 0)
+      view.insertText("https://", replacementRange: caret(NSNotFound))
+      let url = "first\nsee https://example.com/ab now"
+      let whole = NSRange(location: 10, length: 22)
+      #expect(underlined() == [whole])
+      expectHighlighted(view, state)
+      // パスの途中に空白を入れると、空白の手前で URL が終わる。
+      view.select([caret(31)], primary: 0)
+      view.insertText(" ", replacementRange: caret(NSNotFound))
+      let split = "first\nsee https://example.com/a b now"
+      let shortened = NSRange(location: 10, length: 21)
+      #expect(underlined() == [shortened])
+      expectHighlighted(view, state)
+      // URL の手前の行を足しても、下線は URL に付いて動く。
+      view.select([caret(0)], primary: 0)
+      view.insertText("new\n", replacementRange: caret(NSNotFound))
+      #expect(underlined() == [NSRange(location: 14, length: 21)])
+      for (text, expected) in [(split, [shortened]), (url, [whole]), (plain, [])] {
+        view.undo(nil)
+        #expect(view.text == text)
+        #expect(underlined() == expected, "\(text)")
+        expectHighlighted(view, state)
+      }
+      for (text, expected) in [(url, [whole]), (split, [shortened])] {
+        view.redo(nil)
+        #expect(view.text == text)
+        #expect(underlined() == expected, "\(text)")
+        expectHighlighted(view, state)
+      }
+    }
+
     @Test func キャレットを動かすと続けて打った文字は別に取り消す() {
       let (_, view, _) = makeEditor(text: "ab")
       view.insertText("1", replacementRange: caret(NSNotFound))

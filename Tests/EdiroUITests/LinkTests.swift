@@ -427,6 +427,44 @@ extension AppKitTests {
       #expect(opened() == [URL(string: "https://example.com")!, URL(string: "https://elpmaxe.com")!])
     }
 
+    // MARK: - 下線
+
+    @Test func 下線はCmdクリックで開く範囲と一致する() throws {
+      // 代表的な入力と、そのうち下線の付く URL の数。
+      let cases: [(text: String, urls: Int)] = [
+        ("see https://example.com/a now", 1),
+        ("## 見出しの https://example.com/h", 1),
+        ("> 引用の https://example.com/q", 1),
+        ("**太字の https://example.com/b**", 1),
+        ("*斜体の https://example.com/e*", 1),
+        ("[label](https://example.com/l)", 1),
+        ("[https://example.com/x](https://example.com/y)", 1),
+        ("# [見出しのリンク](https://example.com/hl)", 1),
+        ("<https://example.com/auto>", 1),
+        ("https://example.comを参照", 1),
+        ("https://en.wikipedia.org/wiki/M*A*S*H", 1),
+        ("see `https://example.com/code` now", 0),
+        ("```\nhttps://example.com/fence\n```", 0),
+        ("see example.com and www.example.com", 0),
+        ("a https://a.example\n> b **https://b.example** [c](https://c.example) `https://d.example`", 3),
+      ]
+      for (text, urls) in cases {
+        let (window, view, _) = makeEditor(text: text)
+        defer { window.close() }
+        let storage = view.layout.storage
+        let underlined = underlinedRanges(storage)
+        #expect(underlined.count == urls, "\(text)")
+        var openable: [NSRange] = []
+        for index in 0..<storage.length {
+          let range = view.link(containing: index)?.range
+          if let range, openable.last != range { openable.append(range) }
+          let underline = storage.attribute(.underlineStyle, at: index, effectiveRange: nil)
+          #expect((underline != nil) == (range != nil), "\(text) index=\(index)")
+        }
+        #expect(underlined == openable, "\(text)")
+      }
+    }
+
     // MARK: - これまでどおりのクリック
 
     nonisolated static let plainClickScenarios: [PlainClickScenario] = [

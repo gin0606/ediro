@@ -96,6 +96,9 @@ private final class StyleAttributes {
       attributes[.strokeWidth] = MarkdownAttributer.syntheticBoldStroke
       attributes[.strokeColor] = color
     }
+    if style.underline {
+      attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+    }
     resolved[style] = attributes
     return attributes
   }

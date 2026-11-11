@@ -39,6 +39,21 @@ func waitUntil(_ condition: () -> Bool, timeout: Duration = .milliseconds(500)) 
   return storage
 }
 
+/// 下線が付いている範囲。隣り合う範囲は一つにまとめる。
+func underlinedRanges(_ storage: NSAttributedString) -> [NSRange] {
+  var ranges: [NSRange] = []
+  storage.enumerateAttribute(.underlineStyle, in: NSRange(location: 0, length: storage.length)) {
+    value, range, _ in
+    guard let style = value as? Int, style != 0 else { return }
+    if let last = ranges.last, NSMaxRange(last) == range.location {
+      ranges[ranges.count - 1].length += range.length
+    } else {
+      ranges.append(range)
+    }
+  }
+  return ranges
+}
+
 /// テストを通して変わらない環境の判定。待つ判定もあるので、最初の結果を使い回す。
 @MainActor private enum Environment {
   static var completions: Bool?

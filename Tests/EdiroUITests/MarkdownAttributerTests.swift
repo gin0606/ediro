@@ -145,11 +145,12 @@ extension AppKitTests {
       #expect(strong.font == (try styled(heading, at: "# ")).font)
     }
 
-    @Test func URLは外側の見た目のまま() throws {
+    @Test func URLは外側の見た目に下線だけを足す() throws {
       let url = "https://example.com/a"
       for (text, outer) in [
         ("x \(url)", "x"), ("# h \(url)", "# "), ("> q \(url)", "> "), ("**\(url)**", "**"),
-        ("*\(url)*", "*"), ("[a](\(url))", "[a]"),
+        ("*\(url)*", "*"), ("[a](\(url))", "[a]"), ("# [a](\(url))", "[a]"),
+        ("> **[a](\(url))**", "[a]"), ("<\(url)>", "<"),
       ] {
         let storage = highlighted(text)
         let range = (text as NSString).range(of: url)
@@ -157,9 +158,35 @@ extension AppKitTests {
         let attributes = storage.attributes(
           at: range.location, longestEffectiveRange: &effective, in: range)
         #expect(effective == range, "\(text)")
-        let expected = storage.attributes(
+        var expected = storage.attributes(
           at: (text as NSString).range(of: outer).location, effectiveRange: nil)
+        #expect(expected[.underlineStyle] == nil, "\(text)")
+        expected[.underlineStyle] = NSUnderlineStyle.single.rawValue
         #expect(NSDictionary(dictionary: attributes).isEqual(to: expected), "\(text)")
+        #expect(underlinedRanges(storage) == [range], "\(text)")
+      }
+    }
+
+    @Test func 下線はURLだけが持ち中の要素にも引き継ぐ() {
+      let palette = SyntaxPalette(theme: .fallback)
+      let url = palette.style(for: .url)
+      #expect(url == SyntaxStyle(underline: true))
+      #expect(palette.style(for: .strong).inside(url).underline)
+      let link = palette.style(for: .link)
+      #expect(url.inside(link) == SyntaxStyle(color: link.color, underline: true))
+      for kind in MarkdownTokenKind.allCases where kind != .url {
+        #expect(!palette.style(for: kind).underline, "\(kind)")
+      }
+    }
+
+    @Test func URLでない文字には下線を付けない() {
+      for text in [
+        "see `https://example.com` now", "```\nhttps://example.com\n```",
+        "[https://example.com](b)", "see example.com and www.example.com",
+        "mail a@example.com", "<mailto:a@example.com>", "ftp://example.com",
+        "# 見出し\n> 引用の**太字**と*斜体*と[リンク](rel)\n- item",
+      ] {
+        #expect(underlinedRanges(highlighted(text)).isEmpty, "\(text)")
       }
     }
 
