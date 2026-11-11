@@ -340,7 +340,17 @@ scanning. The cost grows with the lines a state change reaches.
 fenced code blocks, links, list markers and blockquotes, exposed as `MarkdownTokenKind`
 with conversions to and from token kind and modifier strings. A fence left unclosed
 runs to the end of the document, as in CommonMark; its lines are tokens including their
-line breaks.
+line breaks. A line holds at most one heading, blockquote or list marker; the text after
+the marker, headings and blockquotes included, holds inline constructs, which stay within
+the line, which LF, VT, FF, CR, NEL, U+2028 and U+2029 all end, and follow CommonMark's
+precedence: backslash escapes, then inline code and
+autolinks, whose contents stay literal, then links, whose labels may contain balanced
+brackets and whose destinations balanced parentheses or `<…>`, then strong and emphasis.
+Strong and emphasis ignore the characters around their markers, so markers between
+Japanese characters count, and never pair across the boundary of inline code, an
+autolink or a link. Escapes and autolinks have no token. Tokens nest without crossing,
+an enclosing token before the tokens inside it, so an application can style the inner
+ones on top of the outer.
 
 ## Providers, async results and concurrency
 

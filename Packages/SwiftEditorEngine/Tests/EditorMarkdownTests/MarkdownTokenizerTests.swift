@@ -83,6 +83,34 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
         #expect(try merged("AppKit で書き直した *下書き専用* エディタ。") == [FlatToken(kind: .emphasis, range: 14..<21)])
     }
 
+    @Test func markersNeedTextNextToThemAndARunOfTheirLength() throws {
+        for text in ["x ** a**", "x **a **", "x * a*", "x *a *", "x ***a***", "x **a*", "x *a**", "x ****"] {
+            #expect(try tokens(text) == [], "\(text)")
+        }
+    }
+
+    @Test func inlineCodeRunsFromARunOfBackticksToOneOfTheSameLength() throws {
+        #expect(try tokens("``a``") == [FlatToken(kind: .inlineCode, range: 0..<5)])
+        #expect(try tokens("`` `**a**` ``") == [FlatToken(kind: .inlineCode, range: 0..<13)])
+        #expect(try tokens("x `` y") == [])
+        #expect(try tokens("``a`") == [])
+        // Inside code a backslash is literal, outside it escapes a backtick.
+        #expect(try tokens("`a\\`b") == [FlatToken(kind: .inlineCode, range: 0..<4)])
+        #expect(try tokens("\\``a`") == [FlatToken(kind: .inlineCode, range: 2..<5)])
+        // A closing run does not open more code that hides what follows.
+        #expect(try tokens("``x`` **bold** `y`") == [FlatToken(kind: .inlineCode, range: 0..<5), FlatToken(kind: .strong, range: 6..<14),
+                                                     FlatToken(kind: .inlineCode, range: 15..<18)])
+    }
+
+    @Test func lineStartMarkersAndWhitespaceNextToMarkers() throws {
+        #expect(try tokens("+ x") == [FlatToken(kind: .listMarker, range: 0..<2)])
+        #expect(try tokens("１. x") == [FlatToken(kind: .listMarker, range: 0..<3)])
+        #expect(try tokens("  > q") == [FlatToken(kind: .blockquote, range: 0..<5)])
+        #expect(try tokens("#\tx") == [FlatToken(kind: .heading(level: 1), range: 0..<3)])
+        #expect(try tokens("x **\u{3000}a**") == [])
+        #expect(try tokens("x *a\u{3000}*") == [])
+    }
+
     @Test func strongAndEmphasisOnOneLine() throws {
         #expect(try kinds("**太字**と*斜体*が同じ行") == [.strong, .emphasis])
     }
@@ -137,24 +165,157 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
         #expect(MarkdownTokenKind(kind: "keyword", modifiers: []) == nil)
     }
 
-    /// Compares with the regular-expression highlighter this tokenizer replaced, on texts
-    /// whose fences all close; only unclosed fences differ by design.
-    @Test func matchesTheRegularExpressionHighlighterOnClosedFences() throws {
-        let pieces = ["# ", "## ", "####### ", "#", "> ", " >", "- ", "* ", "+ ", "1. ", "１. ", "12.", " ", "\t",
-                      "*", "**", "***", "`", "``", "```", "[", "]", "(", ")", "](", "a", "あ", "😀", "\n", "\n",
-                      "\u{2028}", "\u{2029}", "\u{0B}", "\u{0C}", "\u{85}", "\u{3000}", "x*", "*x", "_"]
-        var generator = SplitMix(seed: 0x5EED)
-        var compared = 0
-        for _ in 0..<10000 {
-            let count = Int(generator.next() % 14) + 1
-            let text = (0..<count).map { _ in pieces[Int(generator.next() % UInt64(pieces.count))] }.joined()
-            let fenceLines = text.split(omittingEmptySubsequences: false) { "\n\u{0B}\u{0C}\u{85}\u{2028}\u{2029}".contains($0) }
-                .filter { $0.hasPrefix("```") }.count
-            guard fenceLines % 2 == 0 else { continue }
-            compared += 1
-            #expect(try merged(text) == merge(LegacyHighlighter.tokens(in: text)), "\(text.debugDescription)")
+    // Inline constructs nest, follow CommonMark's precedence and stay within one line.
+
+    /// The token of `kind` covering the first occurrence of `substring` in `text`.
+    private func token(_ kind: MarkdownTokenKind, _ substring: String, in text: String) -> FlatToken {
+        let range = (text as NSString).range(of: substring)
+        return FlatToken(kind: kind, range: range.location..<(range.location + range.length))
+    }
+
+    @Test func headingsAndBlockquotesHoldInlineConstructs() throws {
+        let heading = "# 見出しの**太字**と`code`と[リンク](https://example.com)"
+        #expect(try tokens(heading) == [
+            FlatToken(kind: .heading(level: 1), range: 0..<(heading as NSString).length),
+            token(.strong, "**太字**", in: heading), token(.inlineCode, "`code`", in: heading),
+            token(.link, "[リンク](https://example.com)", in: heading)])
+        let quote = "> 引用の*斜体*と**太字**"
+        #expect(try tokens(quote) == [
+            FlatToken(kind: .blockquote, range: 0..<(quote as NSString).length),
+            token(.emphasis, "*斜体*", in: quote), token(.strong, "**太字**", in: quote)])
+        #expect(try tokens("- **a**") == [FlatToken(kind: .listMarker, range: 0..<2), FlatToken(kind: .strong, range: 2..<7)])
+    }
+
+    @Test func anEnclosingTokenComesBeforeTheTokensInside() throws {
+        #expect(try tokens("**[a](b)**") == [FlatToken(kind: .strong, range: 0..<10), FlatToken(kind: .link, range: 2..<8)])
+        #expect(try tokens("[**a**](b)") == [FlatToken(kind: .link, range: 0..<10), FlatToken(kind: .strong, range: 1..<6)])
+        #expect(try tokens("*a `b` c*") == [FlatToken(kind: .emphasis, range: 0..<9), FlatToken(kind: .inlineCode, range: 3..<6)])
+        #expect(try tokens("# *a*") == [FlatToken(kind: .heading(level: 1), range: 0..<5), FlatToken(kind: .emphasis, range: 2..<5)])
+    }
+
+    @Test func inlineCodeKeepsTheSyntaxInsideLiteral() throws {
+        #expect(try tokens("`[a](https://example.com)`") == [FlatToken(kind: .inlineCode, range: 0..<26)])
+        #expect(try tokens("`**a**`") == [FlatToken(kind: .inlineCode, range: 0..<7)])
+        // An asterisk inside code neither pairs nor stops a pair around the code.
+        #expect(try tokens("**a `*` b**") == [FlatToken(kind: .strong, range: 0..<11), FlatToken(kind: .inlineCode, range: 4..<7)])
+        // Code starting inside a link label and ending after it leaves no link.
+        #expect(try tokens("[a `b](c)`") == [FlatToken(kind: .inlineCode, range: 3..<10)])
+    }
+
+    @Test func linkDestinationsAndTitles() throws {
+        for text in ["[a](https://example.com/Foo_(bar))", "[a](https://example.com/?ids[]=1)", "[a](<https://example.com/a b>)",
+                     "[a](f(x))", "[a](b \"t\")", "[a](b 't')", "[a](b (t))", "[a]( b )", "[a]()", "[a](b\\))",
+                     "[a](*b*)", "[a](b \"*t*\")", "[a](\\(b)", "[a](b \"t\\\"u\")", "[a](<b\\>c>)", "[a](b \"t\" )"] {
+            #expect(try tokens(text) == [FlatToken(kind: .link, range: 0..<(text as NSString).length)], "\(text)")
         }
-        #expect(compared > 1000)
+        for text in ["[a](https://example.com/a b)", "[a](b c)", "[a](b\tc)", "[a](<b)", "[a](b(c)", "[a](b \"t)", "\\[a](b)",
+                     "[a](b(c \"t\")", "[a](<b<c>)", "[a](<b>\"t\")", "[a](b (t(u)))", "[a](b\u{01}c)", "[a](b\u{7F}c)"] {
+            #expect(try tokens(text) == [], "\(text)")
+        }
+    }
+
+    @Test func linkLabels() throws {
+        #expect(try tokens("[a [b] c](d)") == [FlatToken(kind: .link, range: 0..<12)])
+        #expect(try tokens("[a[b](c)") == [FlatToken(kind: .link, range: 2..<8)])
+        #expect(try tokens("[a `]` b](c)") == [FlatToken(kind: .link, range: 0..<12), FlatToken(kind: .inlineCode, range: 3..<6)])
+        // A link contains no link, so only the inner one is.
+        #expect(try tokens("[a [b](c)](d)") == [FlatToken(kind: .link, range: 3..<9)])
+        // Strong and emphasis do not pair across a link's boundary.
+        #expect(try tokens("**a [b** c](d)") == [FlatToken(kind: .link, range: 4..<14)])
+        #expect(try tokens("*[a*](b)") == [FlatToken(kind: .link, range: 1..<8)])
+        #expect(try tokens("[*a](b) [c*](d)") == [FlatToken(kind: .link, range: 0..<7), FlatToken(kind: .link, range: 8..<15)])
+        #expect(try tokens("[**a](b) and [c**](d)") == [FlatToken(kind: .link, range: 0..<8), FlatToken(kind: .link, range: 13..<21)])
+    }
+
+    @Test func escapesAndAutolinksKeepMarkersLiteral() throws {
+        #expect(try tokens("\\*a\\*") == [])
+        #expect(try tokens("\\**a*") == [FlatToken(kind: .emphasis, range: 2..<5)])
+        #expect(try tokens("\\`a`") == [])
+        #expect(try tokens("<https://example.com/*a*>") == [])
+        #expect(try tokens("<https://example.com/`a> and `b`") == [FlatToken(kind: .inlineCode, range: 29..<32)])
+        // Not an autolink: a one-letter scheme, or a space inside.
+        #expect(try tokens("<a:*b*>") == [FlatToken(kind: .emphasis, range: 3..<6)])
+        #expect(try tokens("<https://x *b*>") == [FlatToken(kind: .emphasis, range: 11..<14)])
+        #expect(try tokens("<a+b.c-d:*x*>") == [])
+        let scheme = String(repeating: "a", count: 32)
+        #expect(try tokens("<\(scheme):*x*>") == [])
+        #expect(try tokens("<a\(scheme):*x*>") == [FlatToken(kind: .emphasis, range: 35..<38)])
+        #expect(try tokens("<ab:c\u{01}*x*>") == [FlatToken(kind: .emphasis, range: 6..<9)])
+        #expect(try tokens("<ab:c\u{7F}*x*>") == [FlatToken(kind: .emphasis, range: 6..<9)])
+    }
+
+    @Test func markersBetweenJapaneseCharactersInsideOtherConstructs() throws {
+        let text = "本文と**太字**と*斜体*"
+        #expect(try tokens(text) == [token(.strong, "**太字**", in: text), token(.emphasis, "*斜体*", in: text)])
+        let quote = "> 引用と**太字**。"
+        #expect(try tokens(quote).dropFirst() == [token(.strong, "**太字**", in: quote)])
+    }
+
+    @Test func inlineConstructsDoNotSpanLines() throws {
+        #expect(try tokens("**a\u{2028}b**") == [])
+        #expect(try tokens("`a\u{2029}b`") == [])
+        #expect(try tokens("[a\u{0B}b](c)") == [])
+        #expect(try tokens("[a](b\u{2028}c)") == [])
+        #expect(try tokens("# a\u{2028}**b**") == [FlatToken(kind: .heading(level: 1), range: 0..<3), FlatToken(kind: .strong, range: 4..<9)])
+        // After a closing fence, the rest of its line holds inline constructs.
+        #expect(try tokens("```\nx\n``` `y`") == [FlatToken(kind: .codeBlock, range: 0..<4), FlatToken(kind: .codeBlock, range: 4..<6),
+                                                FlatToken(kind: .codeBlock, range: 6..<9), FlatToken(kind: .inlineCode, range: 10..<13)])
+    }
+
+    /// On random texts, every token lies within its line, and tokens nest without crossing,
+    /// an enclosing token first.
+    @Test func tokensNestWithinLines() {
+        let pieces = ["# ", "## ", "#", "> ", " >", "- ", "* ", "1. ", " ", "\t", "*", "**", "***", "`", "``", "```",
+                      "[", "]", "(", ")", "](", "<", ">", "<a:", "<https:", "\\", "\"", "'", "a", "あ", "😀", "\n", "\n",
+                      "\r\n", "\r", "\u{2028}", "\u{2029}", "\u{0B}", "\u{0C}", "\u{85}", "\u{3000}", "_",
+                      "*a*", "**b**", "`c`", "[d](e)", "](f)", "<g:h>", "[*", "*](f)", "``"]
+        let breaks: Set<UInt16> = [0x0A, 0x0B, 0x0C, 0x0D, 0x85, 0x2028, 0x2029]
+        let tokenizer = MarkdownTokenizer()
+        var generator = SplitMix(seed: 0x5EED)
+        var nested = 0
+        for _ in 0..<20000 {
+            let count = Int(generator.next() % 16) + 1
+            let text = (0..<count).map { _ in pieces[Int(generator.next() % UInt64(pieces.count))] }.joined()
+            var state = tokenizer.initialState
+            // The document's lines, each with its LF.
+            var lines: [String] = []
+            var current = ""
+            for character in text.unicodeScalars {
+                current.unicodeScalars.append(character)
+                if character == "\n" { lines.append(current); current = "" }
+            }
+            lines.append(current)
+            for line in lines {
+                let units = Array(line.utf16)
+                let result = tokenizer.tokenize(line, startingIn: state)
+                state = result.endState
+                let ranges = result.tokens.map(\.range)
+                for (index, token) in result.tokens.enumerated() {
+                    let range = token.range
+                    #expect(!range.isEmpty && range.lowerBound >= 0 && range.upperBound <= units.count, "\(text.debugDescription)")
+                    guard !range.isEmpty, range.lowerBound >= 0, range.upperBound <= units.count else { continue }
+                    #expect(!UTF16.isTrailSurrogate(units[range.lowerBound]), "\(text.debugDescription)")
+                    #expect(range.upperBound == units.count || !UTF16.isTrailSurrogate(units[range.upperBound]), "\(text.debugDescription)")
+                    #expect(range.lowerBound == 0 || !(units[range.lowerBound - 1] == 0x0D && units[range.lowerBound] == 0x0A),
+                            "\(text.debugDescription)")
+                    // Only a code block line covers a line break: its own, at its end.
+                    var upper = range.upperBound
+                    if token.kind == "codeBlock", breaks.contains(units[upper - 1]) {
+                        upper -= 1
+                        if units[upper] == 0x0A, upper > range.lowerBound, units[upper - 1] == 0x0D { upper -= 1 }
+                    }
+                    #expect(!(range.lowerBound..<upper).contains { breaks.contains(units[$0]) }, "\(text.debugDescription) \(token)")
+                    for later in ranges[(index + 1)...] {
+                        let ordered = later.lowerBound > range.lowerBound
+                            || (later.lowerBound == range.lowerBound && later.upperBound < range.upperBound)
+                        #expect(ordered, "\(text.debugDescription)")
+                        #expect(later.lowerBound >= range.upperBound || later.upperBound <= range.upperBound, "\(text.debugDescription)")
+                        if later.lowerBound < range.upperBound { nested += 1 }
+                    }
+                }
+            }
+        }
+        #expect(nested > 1000, "\(nested)")
     }
 }
 
@@ -167,40 +328,5 @@ struct SplitMix {
         z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
         z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
         return z ^ (z >> 31)
-    }
-}
-
-/// The regular-expression highlighter this tokenizer replaced, kept as an oracle.
-enum LegacyHighlighter {
-    private enum Matched { case fixed(MarkdownTokenKind), heading }
-    private static let patterns: [(Matched, String)] = [
-        (.fixed(.codeBlock), "(?m)^```[\\s\\S]*?^```"),
-        (.heading, "(?m)^(#{1,6})[ \\t]+.*$"),
-        (.fixed(.blockquote), "(?m)^[ \\t]*>[ \\t]?.*$"),
-        (.fixed(.listMarker), "(?m)^[ \\t]*(?:[-*+]|\\d+\\.)[ \\t]+"),
-        (.fixed(.link), "\\[[^\\]\\n]*\\]\\([^)\\n]*\\)"),
-        (.fixed(.strong), "(?<!\\*)\\*\\*(?!\\s)[^*\\n]+(?<!\\s)\\*\\*(?!\\*)"),
-        (.fixed(.emphasis), "(?<!\\*)\\*(?!\\s|\\*)[^*\\n]+(?<!\\s)\\*(?!\\*)"),
-        (.fixed(.inlineCode), "`[^`\\n]+`")
-    ]
-    private static let expressions = patterns.map { ($0.0, try! NSRegularExpression(pattern: $0.1)) }
-
-    static func tokens(in text: String) -> [FlatToken] {
-        let full = NSRange(location: 0, length: (text as NSString).length)
-        var claimed: [NSRange] = [], result: [FlatToken] = []
-        for (matched, regex) in expressions {
-            for match in regex.matches(in: text, range: full) {
-                let range = match.range
-                if claimed.contains(where: { NSIntersectionRange($0, range).length > 0 }) { continue }
-                let kind: MarkdownTokenKind
-                switch matched {
-                case .fixed(let fixed): kind = fixed
-                case .heading: kind = .heading(level: match.range(at: 1).length)
-                }
-                claimed.append(range)
-                result.append(FlatToken(kind: kind, range: range.location..<NSMaxRange(range)))
-            }
-        }
-        return result.sorted { $0.range.lowerBound < $1.range.lowerBound }
     }
 }
