@@ -18,10 +18,10 @@ import Testing
   #expect(Theme.theme(id: "aesthetic").name == "Aesthetic")
 }
 
-@Test func 見出しは浅いほど大きい() {
+@Test func 見出しは浅いほど大きい() throws {
   let palette = SyntaxPalette(theme: .fallback)
-  let h1 = palette.style(for: .heading(level: 1)).scale
-  let h3 = palette.style(for: .heading(level: 3)).scale
+  let h1 = try #require(palette.style(for: .heading(level: 1)).scale)
+  let h3 = try #require(palette.style(for: .heading(level: 3)).scale)
   #expect(h1 > h3)
   #expect(h3 > 1)
 }

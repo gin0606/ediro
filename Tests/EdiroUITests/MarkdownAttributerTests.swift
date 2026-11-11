@@ -40,49 +40,46 @@ extension AppKitTests {
         storage.attributedSubstring(from: line).isEqual(to: expected.attributedSubstring(from: line)))
     }
 
-    private func attributedFont(
+    /// `substring` の先頭に付いたフォントと前景色。和文の位置のフォントは NSTextStorage が
+    /// 代替フォントに置き換えるので、書体を比べるときは欧文の文字 (記法の記号など) の位置を見る。
+    private func styled(
       _ text: String, at substring: String, preferences: Preferences = .default
-    ) throws -> NSFont {
+    ) throws -> (font: NSFont, color: NSColor) {
       let storage = highlighted(text, preferences: preferences)
       let range = (text as NSString).range(of: substring)
       try #require(range.location != NSNotFound)
-      return try #require(
-        storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont)
-    }
-
-    private func attributedColor(_ text: String, at substring: String) throws -> NSColor {
-      let storage = highlighted(text)
-      let range = (text as NSString).range(of: substring)
-      try #require(range.location != NSNotFound)
-      return try #require(
-        storage.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor)
+      let attributes = storage.attributes(at: range.location, effectiveRange: nil)
+      return (
+        try #require(attributes[.font] as? NSFont),
+        try #require(attributes[.foregroundColor] as? NSColor)
+      )
     }
 
     @Test func 見出しは本文より大きいフォントになる() throws {
       let text = "# 見出し\n本文"
-      let heading = try attributedFont(text, at: "# 見出し")
-      let body = try attributedFont(text, at: "本文")
+      let heading = try styled(text, at: "# 見出し").font
+      let body = try styled(text, at: "本文").font
       #expect(heading.pointSize > body.pointSize)
     }
 
     @Test func 引用の文字サイズは本文と同じ() throws {
       let text = "> 引用文\n本文"
-      let quote = try attributedFont(text, at: "引用文")
-      let body = try attributedFont(text, at: "本文")
+      let quote = try styled(text, at: "引用文").font
+      let body = try styled(text, at: "本文").font
       #expect(
         quote.pointSize == body.pointSize,
         "quote: \(quote.pointSize), body: \(body.pointSize)")
     }
 
     @Test func 装飾のない本文は既定の前景色になる() throws {
-      let color = try attributedColor("ただの本文です", at: "ただの")
+      let color = try styled("ただの本文です", at: "ただの").color
       let expected = Theme.fallback.editorForeground.nsColor
       #expect(abs(color.redComponent - expected.redComponent) < 0.01)
     }
 
     @Test func インラインコードには専用の色が付く() throws {
-      let code = try attributedColor("実行は `swift test` で", at: "`swift test`")
-      let body = try attributedColor("実行は `swift test` で", at: "実行は")
+      let code = try styled("実行は `swift test` で", at: "`swift test`").color
+      let body = try styled("実行は `swift test` で", at: "実行は").color
       #expect(code != body)
     }
 
@@ -93,23 +90,108 @@ extension AppKitTests {
       return preferences
     }
 
+    @Test func 見出しの中の記法は見出しの大きさと色を引き継ぐ() throws {
+      let text = "# 見出しの**太字**と`code`と[リンク](https://example.com)"
+      let palette = SyntaxPalette(theme: .fallback)
+      let heading = try styled(text, at: "# ", preferences: proportional)
+
+      let strong = try styled(text, at: "**太字**", preferences: proportional)
+      #expect(strong.font == heading.font && strong.color == heading.color)
+
+      let code = try styled(text, at: "`code`", preferences: proportional)
+      let scale = palette.style(for: .heading(level: 1)).scale
+      let expected = FontResolver(preferences: proportional).resolve(
+        for: SyntaxStyle(bold: true, monospaced: true, scale: scale)
+      ).font
+      #expect(code.font == expected)
+      #expect(code.font.pointSize == heading.font.pointSize && code.font.isFixedPitch)
+      #expect(code.color == palette.style(for: .inlineCode).color?.nsColor)
+
+      let link = try styled(text, at: "[リンク]", preferences: proportional)
+      #expect(link.font == heading.font)
+      #expect(link.color == palette.style(for: .link).color?.nsColor)
+    }
+
+    @Test func 引用の中の斜体と太字は引用の色のまま() throws {
+      let text = "> 引用の*斜体*と**太字**"
+      let quote = try styled(text, at: "> ")
+
+      let emphasis = try styled(text, at: "*斜体*")
+      #expect(emphasis.font == quote.font && emphasis.color == quote.color)
+
+      let strong = try styled(text, at: "**太字**")
+      #expect(strong.color == quote.color)
+      let boldItalic = FontResolver(preferences: .default).resolve(
+        for: SyntaxStyle(bold: true, italic: true)
+      ).font
+      #expect(strong.font == boldItalic && strong.font != quote.font)
+    }
+
+    @Test func 入れ子の記法は直近の外側の見た目を引き継ぐ() throws {
+      let palette = SyntaxPalette(theme: .fallback)
+      let linkColor = palette.style(for: .link).color?.nsColor
+
+      let quoted = "> **[a](b)**"
+      let link = try styled(quoted, at: "[a]")
+      #expect(link.color == linkColor)
+      let boldItalic = FontResolver(preferences: .default).resolve(
+        for: SyntaxStyle(bold: true, italic: true)
+      ).font
+      #expect(link.font == boldItalic)
+
+      let heading = "# [**a**](b)"
+      let strong = try styled(heading, at: "**a**")
+      #expect(strong.color == linkColor)
+      #expect(strong.font == (try styled(heading, at: "# ")).font)
+    }
+
+    @Test func 本文の太字と斜体は本文の色で描く() throws {
+      let text = "本文と**太字**と*斜体*"
+      let body = try styled(text, at: "本文")
+      let resolver = FontResolver(preferences: .default)
+      let strong = try styled(text, at: "**太字**")
+      #expect(strong.color == body.color)
+      #expect(strong.font == resolver.resolve(for: SyntaxStyle(bold: true)).font)
+      let emphasis = try styled(text, at: "*斜体*")
+      #expect(emphasis.color == body.color)
+      #expect(emphasis.font == resolver.resolve(for: SyntaxStyle(italic: true)).font)
+    }
+
+    @Test func 隣り合う記法は互いの見た目を引き継がない() throws {
+      let text = "**a**`c`"
+      let code = try styled(text, at: "`c`")
+      let expected = FontResolver(preferences: .default).resolve(
+        for: SyntaxStyle(monospaced: true)
+      ).font
+      #expect(code.font == expected)
+    }
+
+    @Test func コードの中のリンクの記法はコードの見た目のまま() throws {
+      let text = "`[a](https://example.com)`"
+      let storage = highlighted(text)
+      var range = NSRange()
+      let color = storage.attribute(.foregroundColor, at: 0, effectiveRange: &range) as? NSColor
+      #expect(range == NSRange(location: 0, length: storage.length))
+      #expect(color == SyntaxPalette(theme: .fallback).style(for: .inlineCode).color?.nsColor)
+    }
+
     @Test func コードブロックは空行と改行まで等幅の書体になる() throws {
       // 空行の高さを周りのコードの行と揃えるため、改行にもコードの書体を付ける。
       let text = "```\na\n\nb\n```\nplain"
       let storage = highlighted(text, preferences: proportional)
-      let code = try attributedFont(text, at: "a", preferences: proportional)
+      let code = try styled(text, at: "a", preferences: proportional).font
       for location in [3, 5, 6, 8] {
         let font = try #require(storage.attribute(.font, at: location, effectiveRange: nil) as? NSFont)
         #expect(font.isFixedPitch && font.pointSize == code.pointSize, "\(location)")
       }
-      #expect(try !attributedFont(text, at: "plain", preferences: proportional).isFixedPitch)
+      #expect(try !styled(text, at: "plain", preferences: proportional).font.isFixedPitch)
     }
 
     @Test func 閉じていないコードブロックは文書の末尾まで続く() throws {
       let text = "plain\n```\n# not a heading\n**not bold**"
-      #expect(try attributedFont(text, at: "not a heading", preferences: proportional).isFixedPitch)
-      #expect(try attributedFont(text, at: "not bold", preferences: proportional).isFixedPitch)
-      #expect(try !attributedFont(text, at: "plain", preferences: proportional).isFixedPitch)
+      #expect(try styled(text, at: "not a heading", preferences: proportional).font.isFixedPitch)
+      #expect(try styled(text, at: "not bold", preferences: proportional).font.isFixedPitch)
+      #expect(try !styled(text, at: "plain", preferences: proportional).font.isFixedPitch)
     }
   }
 }

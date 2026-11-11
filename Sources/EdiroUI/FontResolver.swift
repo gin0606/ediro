@@ -23,7 +23,7 @@ public struct FontResolver {
   }
 
   public func resolve(for style: SyntaxStyle) -> ResolvedFont {
-    let size = preferences.fontSize * style.scale
+    let size = preferences.fontSize * (style.scale ?? 1)
     let base = weighted(size: size, bold: style.bold, monospaced: style.monospaced)
     guard style.italic else { return base }
     return ResolvedFont(

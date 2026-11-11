@@ -84,7 +84,7 @@ extension AppKitTests {
       view.insertText("`", replacementRange: caret(NSNotFound))
       expectHighlighted(view, state)
       let color = view.layout.storage.attribute(.foregroundColor, at: 4, effectiveRange: nil)
-      #expect(color as? NSColor == SyntaxPalette(theme: state.theme).style(for: .codeBlock).color.nsColor)
+      #expect(color as? NSColor == SyntaxPalette(theme: state.theme).style(for: .codeBlock).color?.nsColor)
       view.deleteBackward(nil)
       expectHighlighted(view, state)
     }

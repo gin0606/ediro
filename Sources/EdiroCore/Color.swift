@@ -1,7 +1,7 @@
 import Foundation
 
 /// AppKit に依存せずテーマを表現するための色。成分は 0...1。
-public struct RGBA: Equatable, Sendable {
+public struct RGBA: Hashable, Sendable {
   public let red: Double
   public let green: Double
   public let blue: Double

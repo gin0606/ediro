@@ -148,5 +148,19 @@ extension AppKitTests {
       let strong = try inkAmount("bold", attributes: try attributes(at: "bold"))
       #expect(strong > body * 1.15, "合成のインク量 \(strong) が本文 \(body) に対して不足")
     }
+
+    @Test func 合成した太字の縁は引き継いだ色で描く() throws {
+      guard let name = fontFamilyWithoutBold() else { return }
+      var preferences = Preferences.default
+      preferences.fontName = name
+
+      let text = "> **bold**"
+      let storage = highlighted(text, preferences: preferences)
+      let location = (text as NSString).range(of: "bold").location
+      let attributes = storage.attributes(at: location, effectiveRange: nil)
+      let stroke = try #require(attributes[.strokeColor] as? NSColor)
+      #expect(stroke == attributes[.foregroundColor] as? NSColor)
+      #expect(stroke == SyntaxPalette(theme: .fallback).style(for: .blockquote).color?.nsColor)
+    }
   }
 }
