@@ -332,6 +332,29 @@ import Foundation
         #expect(detector.detections == 2)
     }
 
+    @Test func aLineHasItsWindowsDetectedInEitherState() {
+        // A line in a code block, and the rest of a fence's line opening one, have no url
+        // token, but turning to text when the state changes needs no detection. So do the
+        // lines after the first within one document line.
+        let cases: [(line: String, without: MarkdownTokenizer.State, with: MarkdownTokenizer.State)] = [
+            ("> 見て https://example.com/a と https://example.com/b\n", .codeBlock, .text),
+            ("```> https://example.com/a\n", .text, .codeBlock),
+            ("x\u{2028}> 見て https://example.com/a\n", .codeBlock, .text),
+            ("x\u{2028}```> https://example.com/a\n", .text, .codeBlock),
+        ]
+        for (line, without, with) in cases {
+            let tokenizer = MarkdownTokenizer()
+            let code = tokenizer.tokenize(line, startingIn: without).tokens
+            #expect(!code.isEmpty && code.allSatisfy { $0.kind == "codeBlock" }, "\(line)")
+            let detections = tokenizer.detector.detections
+            #expect(detections > 0, "\(line)")
+            let changed = tokenizer.tokenize(line, startingIn: with)
+            #expect(tokenizer.detector.detections == detections, "\(line)")
+            #expect(changed.tokens == MarkdownTokenizer().tokenize(line, startingIn: with).tokens, "\(line)")
+            #expect(changed.tokens.contains { $0.kind == "url" }, "\(line)")
+        }
+    }
+
     @Test func theCacheKeepsTwoGenerations() {
         let lines = (0..<20).map { Array("https://example.com/\($0 + 10)".utf16) }
         // Four windows of 22 units fill a generation.

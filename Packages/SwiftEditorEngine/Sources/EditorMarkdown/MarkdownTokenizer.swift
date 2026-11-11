@@ -106,7 +106,11 @@ public enum MarkdownTokenKind: Hashable, Sendable {
 /// The detector sees a window around each `http` of a span rather than the whole span,
 /// since distant text changes its results and a long line would take too long. The
 /// package README's Line tokenization section describes the window. Results are cached by
-/// window text.
+/// window text. Each line also has the detector see the windows it would have if it
+/// started in the other state, without their tokens, so when a fence opens or closes and
+/// the lines after it change state, their windows are cached already, even in a draft
+/// opened inside an unclosed code block. Text in a code block thus costs as much to
+/// tokenize as the same text outside one.
 ///
 /// Tokens nest without crossing one another, and come in order of their start, an
 /// enclosing token before the tokens inside it.
@@ -116,7 +120,7 @@ public struct MarkdownTokenizer: LineTokenizer {
         case codeBlock
     }
 
-    private let detector = URLDetector()
+    let detector = URLDetector()
 
     public init() {}
 
@@ -130,6 +134,8 @@ public struct MarkdownTokenizer: LineTokenizer {
             if length > 0, units[length - 1] == carriageReturn { length -= 1 }
         }
         var scanner = Scanner(units: units, length: length, detector: detector)
+        // Scans each line as it would be in the other state, for its URLs only.
+        var other = Scanner(units: units, length: length, detector: detector)
         var state = state
         var start = 0
         while true {
@@ -139,8 +145,13 @@ public struct MarkdownTokenizer: LineTokenizer {
             switch (state, fence) {
             case (.text, false):
                 scanner.text(start..<end)
-            case (.text, true), (.codeBlock, false):
+            case (.text, true):
                 if breakEnd > start { scanner.add(start..<breakEnd, .codeBlock) }
+                other.inline(start + 3..<end)
+                state = .codeBlock
+            case (.codeBlock, false):
+                if breakEnd > start { scanner.add(start..<breakEnd, .codeBlock) }
+                other.text(start..<end)
                 state = .codeBlock
             case (.codeBlock, true):
                 scanner.add(start..<(start + 3), .codeBlock)

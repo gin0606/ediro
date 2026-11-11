@@ -35,6 +35,10 @@ extension AppKitTests {
           let opened = ContinuousClock.now
           _ = Document(id: "open", text: body, lineTokenizer: MarkdownTokenizer())
           let openMs = opened.duration(to: .now) / .milliseconds(1)
+          // 本文全体が閉じていないフェンスの中にある文書を開く時間。
+          let openedFenced = ContinuousClock.now
+          _ = Document(id: "openFenced", text: "```\n``\n" + body, lineTokenizer: MarkdownTokenizer())
+          let openFencedMs = openedFenced.duration(to: .now) / .milliseconds(1)
           // 先頭は、もう 1 文字でフェンスになる行にしておく。開く向きは本文の前に置き、閉じる
           // 向きは開いたフェンスの次に置く。
           let opening = try Editing(text: "``\n" + body, attributer: attributer)
@@ -65,7 +69,7 @@ extension AppKitTests {
           #expect(open.lines == opening.document.snapshot.lineCount)
           #expect(close.lines == closing.document.snapshot.lineCount - 1)
           print(
-            "BENCH \(name) utf16=\(opening.document.snapshot.utf16Count) lines=\(opening.document.snapshot.lineCount) openDocumentMs=\(openMs) middleMedianMs=\(median(middle.times)) inURLMedianMs=\(inURL.map { median($0.times) } ?? .nan) inURLMaxMs=\(inURL.map { $0.times.max()! } ?? .nan) fenceMedianMs=\(median(open.times)) fenceMaxMs=\(open.times.max()!) closeMedianMs=\(median(close.times)) closeMaxMs=\(close.times.max()!) coldCloseMedianMs=\(median(coldCloses)) coldCloseMaxMs=\(coldCloses.max()!)"
+            "BENCH \(name) utf16=\(opening.document.snapshot.utf16Count) lines=\(opening.document.snapshot.lineCount) openDocumentMs=\(openMs) openFencedMs=\(openFencedMs) middleMedianMs=\(median(middle.times)) inURLMedianMs=\(inURL.map { median($0.times) } ?? .nan) inURLMaxMs=\(inURL.map { $0.times.max()! } ?? .nan) fenceMedianMs=\(median(open.times)) fenceMaxMs=\(open.times.max()!) closeMedianMs=\(median(close.times)) closeMaxMs=\(close.times.max()!) coldCloseMedianMs=\(median(coldCloses)) coldCloseMaxMs=\(coldCloses.max()!)"
           )
         }
       }
@@ -100,15 +104,27 @@ extension AppKitTests {
           _ = Document(id: "open", text: line, lineTokenizer: MarkdownTokenizer())
           opens.append(opened.duration(to: .now) / .milliseconds(1))
         }
+        // 同じ行がフェンスの中にある文書を開く時間。
+        var fencedOpens: [Double] = []
+        for _ in 0..<5 {
+          let opened = ContinuousClock.now
+          _ = Document(id: "openFenced", text: "```\n" + line, lineTokenizer: MarkdownTokenizer())
+          fencedOpens.append(opened.duration(to: .now) / .milliseconds(1))
+        }
         let editing = try Editing(text: line, attributer: attributer)
         defer { editing.observation?.cancel() }
+        let fenced = try Editing(text: "```\n" + line, attributer: attributer)
+        defer { fenced.observation?.cancel() }
         let middle = (line as NSString).range(of: "https://example.com/docs/page-\(count / 2)").location
         // URL の中と、その URL の窓のすぐ手前への打鍵。毎回違う文字を打つ。
         let inURL = try editing.measure(at: Position(0, middle + 20), distinct: true)
         let beforeURL = try editing.measure(at: Position(0, middle - 9), distinct: true)
+        // フェンスの中にある同じ行の、URL の中への打鍵。
+        let fencedInURL = try fenced.measure(at: Position(1, middle + 20), distinct: true)
         #expect(inURL.lines == 1)
+        #expect(fencedInURL.lines == 1)
         print(
-          "BENCH \(name) utf16=\((line as NSString).length) urls=\(count) openDocumentMedianMs=\(median(opens)) openDocumentMaxMs=\(opens.max()!) inURLMedianMs=\(median(inURL.times)) inURLMaxMs=\(inURL.times.max()!) beforeURLMedianMs=\(median(beforeURL.times)) beforeURLMaxMs=\(beforeURL.times.max()!)"
+          "BENCH \(name) utf16=\((line as NSString).length) urls=\(count) openDocumentMedianMs=\(median(opens)) openDocumentMaxMs=\(opens.max()!) openFencedMedianMs=\(median(fencedOpens)) inURLMedianMs=\(median(inURL.times)) inURLMaxMs=\(inURL.times.max()!) beforeURLMedianMs=\(median(beforeURL.times)) beforeURLMaxMs=\(beforeURL.times.max()!) fencedInURLMedianMs=\(median(fencedInURL.times)) fencedInURLMaxMs=\(fencedInURL.times.max()!)"
         )
       }
     }

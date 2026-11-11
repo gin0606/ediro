@@ -394,6 +394,15 @@ window. The detector slows on text other than ASCII after an open bracket, where
 2,048-unit window takes about 15 ms. Detecting every URL of text the tokenizer has not
 seen costs more: a line of 22,000 UTF-16 units with 100 to 650 URLs takes 20 to 45 ms the
 first time, and one made only of URLs joined by `&` without spaces several hundred.
+So the tokenizer also has the detector see the windows each line would have if it
+started in the other state, inside or outside a code block, and drops their tokens. When
+a fence opens or closes, the lines whose state changes find their windows cached, even
+in a draft opened inside an unclosed code block: closing that fence in a draft of 25,000
+UTF-16 units with about 150 URLs takes about 6 ms rather than 16. In exchange, text in a
+code block costs what the same text costs outside one, though it has no `url` token:
+opening that draft takes about 12 ms rather than 1, opening or pasting the long lines
+above inside a code block the times given for them, and a keystroke in such a line up to
+about 3 ms; its windows fill the same cache.
 
 ## Providers, async results and concurrency
 
