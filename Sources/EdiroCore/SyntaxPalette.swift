@@ -45,7 +45,7 @@ public struct SyntaxPalette: Sendable {
   private var code: RGBA { isDark ? RGBA(hex: 0xCE9178) : RGBA(hex: 0xA31515) }
   private var muted: RGBA { isDark ? RGBA(hex: 0x8A8A8A) : RGBA(hex: 0x6E6E6E) }
 
-  /// 太字と斜体は色を持たず、外側の色で描く。
+  /// 太字と斜体は色を持たず、外側の色で描く。URL は見た目を何も足さない。
   public func style(for kind: MarkdownTokenKind) -> SyntaxStyle {
     switch kind {
     case .heading(let level):
@@ -64,6 +64,8 @@ public struct SyntaxPalette: Sendable {
       return SyntaxStyle(color: accent, bold: true)
     case .blockquote:
       return SyntaxStyle(color: muted, italic: true)
+    case .url:
+      return SyntaxStyle()
     }
   }
 }

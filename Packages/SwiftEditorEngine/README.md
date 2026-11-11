@@ -337,20 +337,61 @@ UTF-16 units, the size the application benchmarks; keep tokenizers to simple per
 scanning. The cost grows with the lines a state change reaches.
 
 `MarkdownTokenizer` recognizes headings with their level, strong, emphasis, inline code,
-fenced code blocks, links, list markers and blockquotes, exposed as `MarkdownTokenKind`
-with conversions to and from token kind and modifier strings. A fence left unclosed
-runs to the end of the document, as in CommonMark; its lines are tokens including their
-line breaks. A line holds at most one heading, blockquote or list marker; the text after
-the marker, headings and blockquotes included, holds inline constructs, which stay within
-the line, which LF, VT, FF, CR, NEL, U+2028 and U+2029 all end, and follow CommonMark's
-precedence: backslash escapes, then inline code and
-autolinks, whose contents stay literal, then links, whose labels may contain balanced
-brackets and whose destinations balanced parentheses or `<…>`, then strong and emphasis.
-Strong and emphasis ignore the characters around their markers, so markers between
-Japanese characters count, and never pair across the boundary of inline code, an
-autolink or a link. Escapes and autolinks have no token. Tokens nest without crossing,
-an enclosing token before the tokens inside it, so an application can style the inner
-ones on top of the outer.
+fenced code blocks, links, list markers, blockquotes and URLs, exposed as
+`MarkdownTokenKind` with conversions to and from token kind and modifier strings. A fence
+left unclosed runs to the end of the document, as in CommonMark; its lines are tokens
+including their line breaks. A line holds at most one heading, blockquote or list marker;
+the text after the marker, headings and blockquotes included, holds inline constructs,
+which stay within the line, which LF, VT, FF, CR, NEL, U+2028 and U+2029 all end, and
+follow CommonMark's precedence: backslash escapes, then inline code and autolinks, whose
+contents stay literal, then links, whose labels may contain balanced brackets and whose
+destinations balanced parentheses or `<…>`, then strong and emphasis. Strong and emphasis
+ignore the characters around their markers, so markers between Japanese characters count,
+and never pair across the boundary of inline code, an autolink or a link. Escapes and
+autolinks have no token of their own. Tokens nest without crossing, an enclosing token
+before the tokens inside it, so an application can style the inner ones on top of the
+outer.
+
+A `url` token marks an http or https URL that can be opened: a link destination starting
+with `http://` or `https://` in any case (inside the brackets of `<…>`, never the label),
+the inside of an autolink with such a scheme outside link labels, or a URL in plain text.
+Plain text is what lies outside inline code, autolinks, links, the markers of strong and
+emphasis and line-start markers, so it includes the text inside strong, emphasis,
+headings and blockquotes, but never code blocks. `NSDataDetector` finds the URLs there,
+and only those written starting with `http://` or `https://` count; a URL never extends
+beyond its span of plain text, and the detector's result is not adjusted. A token covers
+the text as written, backslash escapes included.
+
+The detector's results depend on text far from them, and a long line takes it longer than
+a keystroke may, so it sees a window around each `http://` or `https://` instead of the
+whole span. The window starts before the scheme by the printable ASCII characters other
+than a space that run up to it (at most 64) and then up to 8 more characters, so that
+`xhttps://…` and `1https://…` have no URL while `あ1https://…` does. It ends 128 UTF-16
+units after the scheme's start, a distance that doubles while the URL may go on past the
+window: while the link the detector found at the scheme ends within 16 units of the
+window's end with no whitespace between, while the text from that link's end, or the
+scheme's when there is none, to the window's end is printable ASCII a URL may hold (no
+space, `"`, `<` or `>`), and, up to 1,024 units after the scheme, while the text from the
+scheme to the window's end has no whitespace and leaves a `(`, `[` or `{` open that a
+bracket beyond the window closes. The window stops growing at 2,048 units or once it holds
+two more `http://` or `https://` after that link, so few growing windows overlap, and it
+never leaves the span. A link starting at the scheme in the last window is a URL unless it
+starts inside a link found at an earlier scheme or the window still cuts it: it ends
+within 16 units of the window's end with no whitespace between, or the window has reached
+2,048 units and ends in printable ASCII a URL may hold that runs from the link's end. A
+cut link also covers the printable ASCII a URL may hold right after it, so a URL longer
+than the largest window, as URLs joined without spaces may be to the detector, gives no
+token rather than part of it. Where the detector ends a URL well before the window's end
+and text other than ASCII follows, as in `…/abc.日本語/…` past the first window, the token
+holds only that part. A link starting before the scheme is no URL, and its window does not
+grow. Every scheme has its own window, which depends only on the text around it, so an
+edit changes only the windows that hold it. Results are cached by window text in each
+tokenizer, in two generations of up to 1 MB of window text each, so a keystroke runs the
+detector only for the windows around it, a fraction of a millisecond for a 128-unit
+window. The detector slows on text other than ASCII after an open bracket, where one
+2,048-unit window takes about 15 ms. Detecting every URL of text the tokenizer has not
+seen costs more: a line of 22,000 UTF-16 units with 100 to 650 URLs takes 20 to 45 ms the
+first time, and one made only of URLs joined by `&` without spaces several hundred.
 
 ## Providers, async results and concurrency
 

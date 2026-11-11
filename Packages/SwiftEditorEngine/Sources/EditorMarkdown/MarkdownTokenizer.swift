@@ -11,10 +11,13 @@ public enum MarkdownTokenKind: Hashable, Sendable {
     case link
     case listMarker
     case blockquote
+    /// An http or https URL that can be opened: a link destination, the inside of an
+    /// autolink, or a URL written in plain text.
+    case url
 
     /// Every kind, headings of each level included.
     public static let allCases: [MarkdownTokenKind] =
-        (1...6).map { .heading(level: $0) } + [.strong, .emphasis, .inlineCode, .codeBlock, .link, .listMarker, .blockquote]
+        (1...6).map { .heading(level: $0) } + [.strong, .emphasis, .inlineCode, .codeBlock, .link, .listMarker, .blockquote, .url]
 
     /// The kind string of a `HighlightToken` or `LineToken`.
     public var kind: String {
@@ -27,6 +30,7 @@ public enum MarkdownTokenKind: Hashable, Sendable {
         case .link: "link"
         case .listMarker: "listMarker"
         case .blockquote: "blockquote"
+        case .url: "url"
         }
     }
     /// A heading carries its level as the modifier `level1` to `level6`.
@@ -47,6 +51,7 @@ public enum MarkdownTokenKind: Hashable, Sendable {
         case "link": self = .link
         case "listMarker": self = .listMarker
         case "blockquote": self = .blockquote
+        case "url": self = .url
         default: return nil
         }
         guard modifiers.isEmpty else { return nil }
@@ -74,7 +79,8 @@ public enum MarkdownTokenKind: Hashable, Sendable {
 /// 1. A backslash before ASCII punctuation makes that character literal.
 /// 2. Inline code, from a run of backticks to the next run of the same length, makes the
 ///    characters inside literal. A run without one is literal itself.
-/// 3. An autolink `<scheme:…>` makes the characters inside literal. It has no token.
+/// 3. An autolink `<scheme:…>` makes the characters inside literal. It has no token of its
+///    own; one with an http or https scheme holds a `url` token.
 /// 4. A link `[label](destination "title")`: the label may contain balanced brackets but no
 ///    link; the destination either has no spaces or controls and only balanced parentheses
 ///    or is enclosed in `<…>`; the title is optional.
@@ -84,6 +90,24 @@ public enum MarkdownTokenKind: Hashable, Sendable {
 ///    look at the characters around their markers, so markers between Japanese characters
 ///    count. A pair never spans the boundary of inline code, an autolink or a link.
 ///
+/// A `url` token marks an http or https URL that can be opened, wherever it is:
+///
+/// - A link destination starting with `http://` or `https://`, in any case; inside the
+///   brackets when enclosed in `<…>`. Never the label.
+/// - The inside of an autolink with such a scheme, unless it is in a link label.
+/// - A URL in plain text: the text of a span outside inline code, autolinks, links (labels
+///   included), the markers of strong and emphasis, and line-start markers, which includes
+///   the text inside strong, emphasis, headings and blockquotes. `NSDataDetector` finds
+///   links in each such span, and only those written starting with `http://` or `https://`
+///   count, so `www.example.com` or an email address does not. A URL never extends beyond
+///   its span, and the detector's result is taken as it is: in
+///   `https://en.wikipedia.org/wiki/M*A*S*H` the URL ends at `M`, where the emphasis starts.
+///
+/// The detector sees a window around each `http` of a span rather than the whole span,
+/// since distant text changes its results and a long line would take too long. The
+/// package README's Line tokenization section describes the window. Results are cached by
+/// window text.
+///
 /// Tokens nest without crossing one another, and come in order of their start, an
 /// enclosing token before the tokens inside it.
 public struct MarkdownTokenizer: LineTokenizer {
@@ -91,6 +115,8 @@ public struct MarkdownTokenizer: LineTokenizer {
         case text
         case codeBlock
     }
+
+    private let detector = URLDetector()
 
     public init() {}
 
@@ -103,7 +129,7 @@ public struct MarkdownTokenizer: LineTokenizer {
             length -= 1
             if length > 0, units[length - 1] == carriageReturn { length -= 1 }
         }
-        var scanner = Scanner(units: units, length: length)
+        var scanner = Scanner(units: units, length: length, detector: detector)
         var state = state
         var start = 0
         while true {
@@ -141,10 +167,11 @@ private struct Scanner {
     let units: [UInt16]
     /// The end of the content, before its line break.
     let length: Int
+    let detector: URLDetector
     private var tokens: [LineToken] = []
 
-    init(units: [UInt16], length: Int) {
-        self.units = units; self.length = length
+    init(units: [UInt16], length: Int, detector: URLDetector) {
+        self.units = units; self.length = length; self.detector = detector
     }
 
     mutating func add(_ range: Range<Int>, _ kind: MarkdownTokenKind) {
@@ -177,9 +204,6 @@ private struct Scanner {
         var index = index
         while isBlank(index, before: end) { index += 1 }
         return index
-    }
-    private func isWhitespace(_ unit: UInt16) -> Bool {
-        Unicode.Scalar(unit)?.properties.isWhitespace ?? false
     }
     private func isASCIIPunctuation(_ unit: UInt16) -> Bool {
         (0x21...0x2F).contains(unit) || (0x3A...0x40).contains(unit) || (0x5B...0x60).contains(unit)
@@ -244,7 +268,7 @@ private struct Scanner {
     /// The inline constructs of `span`, which lies within one line. One pass from the left
     /// finds escapes, inline code, autolinks and links, as CommonMark does, and collects the
     /// asterisks outside them; asterisks then pair within the label of each link and
-    /// within the rest of the span.
+    /// within the rest of the span. The text left between all of these holds URLs.
     mutating func inline(_ span: Range<Int>) {
         let end = span.upperBound
         var ticks: BacktickRuns?
@@ -254,6 +278,11 @@ private struct Scanner {
         var links: [(range: Range<Int>, label: Range<Int>)] = []
         /// The `[` that may still open a link, innermost last.
         var openers: [Int] = []
+        /// Inline code, autolinks, links and the markers of strong and emphasis. Those in a
+        /// link label lie inside the link.
+        var constructs: [Range<Int>] = []
+        /// The insides of autolinks, which hold URLs unless they are in a link label.
+        var autolinks: [Range<Int>] = []
         var index = span.lowerBound
         while index < end {
             switch units[index] {
@@ -265,10 +294,15 @@ private struct Scanner {
                 if ticks == nil { ticks = BacktickRuns(units: units, span: span) }
                 if let close = ticks!.first(length: run - index, from: run) {
                     add(index..<(close + run - index), .inlineCode)
+                    constructs.append(index..<(close + run - index))
                     index = close + run - index
                 } else { index = run }
             case 0x3C:
-                index = autolinkEnd(from: index, before: end) ?? index + 1
+                if let autolink = autolinkEnd(from: index, before: end) {
+                    autolinks.append(index + 1..<autolink - 1)
+                    constructs.append(index..<autolink)
+                    index = autolink
+                } else { index += 1 }
             case asterisk:
                 stars.append(index)
                 index += 1
@@ -278,11 +312,13 @@ private struct Scanner {
             case 0x5D:
                 if let opener = openers.popLast(),
                    let tail = linkTailEnd(from: index + 1, before: end, destinations: &destinations) {
-                    links.append((opener..<tail, (opener + 1)..<index))
-                    add(opener..<tail, .link)
+                    links.append((opener..<tail.end, (opener + 1)..<index))
+                    add(opener..<tail.end, .link)
+                    addURL(tail.destination)
+                    constructs.append(opener..<tail.end)
                     // A link contains no link, so no earlier bracket opens one any more.
                     openers.removeAll()
-                    index = tail
+                    index = tail.end
                 } else { index += 1 }
             default:
                 index += 1
@@ -301,29 +337,54 @@ private struct Scanner {
             if link < links.count, links[link].label.contains(star) { inside.append(star) } else { outside.append(star) }
         }
         pair(inside)
-        pair(outside)
+        constructs += pair(outside)
+
+        link = 0
+        for autolink in autolinks {
+            while link < links.count, links[link].range.upperBound <= autolink.lowerBound { link += 1 }
+            if link == links.count || !links[link].range.contains(autolink.lowerBound) { addURL(autolink) }
+        }
+        var text = span.lowerBound
+        for construct in constructs.sorted(by: { $0.lowerBound < $1.lowerBound }) + [end..<end] {
+            if construct.lowerBound > text {
+                for url in detector.urls(in: units, text..<construct.lowerBound) { add(url, .url) }
+            }
+            text = max(text, construct.upperBound)
+        }
+    }
+
+    /// Adds a `url` token for `range` when it holds an http or https URL.
+    private mutating func addURL(_ range: Range<Int>) {
+        if let scheme = httpSchemeLength(units, at: range.lowerBound, before: range.upperBound),
+           range.count > scheme {
+            add(range, .url)
+        }
     }
 
     /// Pairs each run of asterisks with the next one, when both are `**` or both `*`, the
     /// text after the opening run does not start with whitespace and the text before the
     /// closing run does not end with it. `stars` are those of one link label, or those
-    /// outside every link of a span.
-    private mutating func pair(_ stars: [Int]) {
+    /// outside every link of a span. Returns the runs that became markers.
+    @discardableResult
+    private mutating func pair(_ stars: [Int]) -> [Range<Int>] {
         var runs: [Range<Int>] = []
         for star in stars {
             if let last = runs.last, last.upperBound == star {
                 runs[runs.count - 1] = last.lowerBound..<(star + 1)
             } else { runs.append(star..<(star + 1)) }
         }
+        var markers: [Range<Int>] = []
         var run = 0
         while run + 1 < runs.count {
             let open = runs[run], close = runs[run + 1]
             if open.count == close.count, open.count <= 2,
                !isWhitespace(units[open.upperBound]), !isWhitespace(units[close.lowerBound - 1]) {
                 add(open.lowerBound..<close.upperBound, open.count == 2 ? .strong : .emphasis)
+                markers += [open, close]
                 run += 2
             } else { run += 1 }
         }
+        return markers
     }
 
     /// The end of an autolink `<scheme:…>` starting at `start`: a scheme of 2 to 32 ASCII
@@ -349,24 +410,30 @@ private struct Scanner {
         return nil
     }
 
-    /// The end of a link's `(destination "title")` starting at `start`. `destinations`
-    /// serves every later link before `end`.
-    private func linkTailEnd(from start: Int, before end: Int, destinations: inout Destinations?) -> Int? {
+    /// The end of a link's `(destination "title")` starting at `start`, and the
+    /// destination, inside the brackets when enclosed in `<…>`. `destinations` serves every
+    /// later link before `end`.
+    private func linkTailEnd(from start: Int, before end: Int, destinations: inout Destinations?)
+        -> (end: Int, destination: Range<Int>)? {
         guard start < end, units[start] == 0x28 else { return nil }
         var index = skipBlanks(from: start + 1, before: end)
         guard index < end else { return nil }
+        let destination: Range<Int>
         if units[index] == 0x3C {
             // `<destination>`, which may contain spaces.
             index += 1
+            let inside = index
             while index < end, units[index] != 0x3E {
                 if units[index] == 0x3C { return nil }
                 index += isEscape(index, before: end) ? 2 : 1
             }
             guard index < end else { return nil }
+            destination = inside..<index
             index += 1
         } else {
             if destinations == nil { destinations = Destinations(self, span: index..<end) }
             guard let destinationEnd = destinations!.end(from: index) else { return nil }
+            destination = index..<destinationEnd
             index = destinationEnd
         }
         let destinationEnd = index
@@ -375,7 +442,7 @@ private struct Scanner {
             index = skipBlanks(from: title, before: end)
         }
         guard index < end, units[index] == 0x29 else { return nil }
-        return index + 1
+        return (index + 1, destination)
     }
 
     /// The end of a link title `"…"`, `'…'` or `(…)` starting at `start`.

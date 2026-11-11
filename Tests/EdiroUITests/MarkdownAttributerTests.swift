@@ -145,6 +145,24 @@ extension AppKitTests {
       #expect(strong.font == (try styled(heading, at: "# ")).font)
     }
 
+    @Test func URLは外側の見た目のまま() throws {
+      let url = "https://example.com/a"
+      for (text, outer) in [
+        ("x \(url)", "x"), ("# h \(url)", "# "), ("> q \(url)", "> "), ("**\(url)**", "**"),
+        ("*\(url)*", "*"), ("[a](\(url))", "[a]"),
+      ] {
+        let storage = highlighted(text)
+        let range = (text as NSString).range(of: url)
+        var effective = NSRange()
+        let attributes = storage.attributes(
+          at: range.location, longestEffectiveRange: &effective, in: range)
+        #expect(effective == range, "\(text)")
+        let expected = storage.attributes(
+          at: (text as NSString).range(of: outer).location, effectiveRange: nil)
+        #expect(NSDictionary(dictionary: attributes).isEqual(to: expected), "\(text)")
+      }
+    }
+
     @Test func 本文の太字と斜体は本文の色で描く() throws {
       let text = "本文と**太字**と*斜体*"
       let body = try styled(text, at: "本文")

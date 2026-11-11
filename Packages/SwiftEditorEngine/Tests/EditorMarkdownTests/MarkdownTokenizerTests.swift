@@ -57,7 +57,8 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
     }
 
     @Test func links() throws {
-        #expect(try merged("[Editaro](https://editaro.com) inspired it") == [FlatToken(kind: .link, range: 0..<30)])
+        #expect(try merged("[Editaro](https://editaro.com) inspired it") == [FlatToken(kind: .link, range: 0..<30),
+                                                                               FlatToken(kind: .url, range: 10..<29)])
     }
 
     @Test func listMarkersAndBlockquotes() throws {
@@ -156,8 +157,9 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
     }
 
     @Test func kindsRoundTripThroughStrings() {
-        #expect(MarkdownTokenKind.allCases.count == 13)
-        #expect(Set(MarkdownTokenKind.allCases).count == 13)
+        #expect(MarkdownTokenKind.allCases.count == 14)
+        #expect(Set(MarkdownTokenKind.allCases).count == 14)
+        #expect(MarkdownTokenKind(kind: "url", modifiers: []) == .url)
         for kind in MarkdownTokenKind.allCases { #expect(MarkdownTokenKind(kind: kind.kind, modifiers: kind.modifiers) == kind) }
         #expect(MarkdownTokenKind(kind: "heading", modifiers: ["level7"]) == nil)
         #expect(MarkdownTokenKind(kind: "heading", modifiers: []) == nil)
@@ -178,7 +180,7 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
         #expect(try tokens(heading) == [
             FlatToken(kind: .heading(level: 1), range: 0..<(heading as NSString).length),
             token(.strong, "**太字**", in: heading), token(.inlineCode, "`code`", in: heading),
-            token(.link, "[リンク](https://example.com)", in: heading)])
+            token(.link, "[リンク](https://example.com)", in: heading), token(.url, "https://example.com", in: heading)])
         let quote = "> 引用の*斜体*と**太字**"
         #expect(try tokens(quote) == [
             FlatToken(kind: .blockquote, range: 0..<(quote as NSString).length),
@@ -203,6 +205,8 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
     }
 
     @Test func linkDestinationsAndTitles() throws {
+        // URLs in destinations or in the text are tested with the other URLs.
+        func tokens(_ text: String) throws -> [FlatToken] { try EditorMarkdownTests.tokens(text).filter { $0.kind != .url } }
         for text in ["[a](https://example.com/Foo_(bar))", "[a](https://example.com/?ids[]=1)", "[a](<https://example.com/a b>)",
                      "[a](f(x))", "[a](b \"t\")", "[a](b 't')", "[a](b (t))", "[a]( b )", "[a]()", "[a](b\\))",
                      "[a](*b*)", "[a](b \"*t*\")", "[a](\\(b)", "[a](b \"t\\\"u\")", "[a](<b\\>c>)", "[a](b \"t\" )"] {
@@ -231,11 +235,12 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
         #expect(try tokens("\\*a\\*") == [])
         #expect(try tokens("\\**a*") == [FlatToken(kind: .emphasis, range: 2..<5)])
         #expect(try tokens("\\`a`") == [])
-        #expect(try tokens("<https://example.com/*a*>") == [])
-        #expect(try tokens("<https://example.com/`a> and `b`") == [FlatToken(kind: .inlineCode, range: 29..<32)])
+        #expect(try tokens("<https://example.com/*a*>") == [FlatToken(kind: .url, range: 1..<24)])
+        #expect(try tokens("<https://example.com/`a> and `b`") == [FlatToken(kind: .url, range: 1..<23),
+                                                                   FlatToken(kind: .inlineCode, range: 29..<32)])
         // Not an autolink: a one-letter scheme, or a space inside.
         #expect(try tokens("<a:*b*>") == [FlatToken(kind: .emphasis, range: 3..<6)])
-        #expect(try tokens("<https://x *b*>") == [FlatToken(kind: .emphasis, range: 11..<14)])
+        #expect(try tokens("<https://x *b*>") == [FlatToken(kind: .url, range: 1..<10), FlatToken(kind: .emphasis, range: 11..<14)])
         #expect(try tokens("<a+b.c-d:*x*>") == [])
         let scheme = String(repeating: "a", count: 32)
         #expect(try tokens("<\(scheme):*x*>") == [])
@@ -268,11 +273,13 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
         let pieces = ["# ", "## ", "#", "> ", " >", "- ", "* ", "1. ", " ", "\t", "*", "**", "***", "`", "``", "```",
                       "[", "]", "(", ")", "](", "<", ">", "<a:", "<https:", "\\", "\"", "'", "a", "あ", "😀", "\n", "\n",
                       "\r\n", "\r", "\u{2028}", "\u{2029}", "\u{0B}", "\u{0C}", "\u{85}", "\u{3000}", "_",
-                      "*a*", "**b**", "`c`", "[d](e)", "](f)", "<g:h>", "[*", "*](f)", "``"]
+                      "*a*", "**b**", "`c`", "[d](e)", "](f)", "<g:h>", "[*", "*](f)", "``",
+                      "https://", "http://a.b/", "https://c.d/(e)", "(https://f.g", "<https://h.i>", "x.y", "@"]
         let breaks: Set<UInt16> = [0x0A, 0x0B, 0x0C, 0x0D, 0x85, 0x2028, 0x2029]
         let tokenizer = MarkdownTokenizer()
         var generator = SplitMix(seed: 0x5EED)
         var nested = 0
+        var urls = 0
         for _ in 0..<20000 {
             let count = Int(generator.next() % 16) + 1
             let text = (0..<count).map { _ in pieces[Int(generator.next() % UInt64(pieces.count))] }.joined()
@@ -305,6 +312,11 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
                         if units[upper] == 0x0A, upper > range.lowerBound, units[upper - 1] == 0x0D { upper -= 1 }
                     }
                     #expect(!(range.lowerBound..<upper).contains { breaks.contains(units[$0]) }, "\(text.debugDescription) \(token)")
+                    if token.kind == "url" {
+                        let url = String(decoding: units[range], as: UTF16.self).lowercased()
+                        #expect(url.hasPrefix("http://") || url.hasPrefix("https://"), "\(text.debugDescription) \(token)")
+                        urls += 1
+                    }
                     for later in ranges[(index + 1)...] {
                         let ordered = later.lowerBound > range.lowerBound
                             || (later.lowerBound == range.lowerBound && later.upperBound < range.upperBound)
@@ -316,6 +328,7 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
             }
         }
         #expect(nested > 1000, "\(nested)")
+        #expect(urls > 1000, "\(urls)")
     }
 }
 
