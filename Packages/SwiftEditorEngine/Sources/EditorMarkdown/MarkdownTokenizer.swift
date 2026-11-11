@@ -162,6 +162,77 @@ private let backslash: UInt16 = 0x5C
 private let space: UInt16 = 0x20
 private let tab: UInt16 = 0x09
 
+/// Whether a backslash before `unit` escapes it.
+private func isASCIIPunctuation(_ unit: UInt16) -> Bool {
+    (0x21...0x2F).contains(unit) || (0x3A...0x40).contains(unit) || (0x5B...0x60).contains(unit)
+        || (0x7B...0x7E).contains(unit)
+}
+
+/// The end of an autolink `<scheme:…>` starting at `start`: a scheme of 2 to 32 ASCII
+/// letters, digits, `+`, `.` or `-` starting with a letter, then characters other than
+/// spaces, controls, `<` and `>`.
+private func autolinkEnd(in units: [UInt16], from start: Int, before end: Int) -> Int? {
+    func isLetter(_ unit: UInt16) -> Bool { (0x41...0x5A).contains(unit) || (0x61...0x7A).contains(unit) }
+    var index = start + 1
+    guard index < end, isLetter(units[index]) else { return nil }
+    index += 1
+    while index < end, isLetter(units[index]) || (0x30...0x39).contains(units[index]) || [0x2B, 0x2E, 0x2D].contains(units[index]) {
+        index += 1
+    }
+    guard (2...32).contains(index - start - 1), index < end, units[index] == 0x3A else { return nil }
+    index += 1
+    while index < end {
+        switch units[index] {
+        case 0x3E: return index + 1
+        case 0...0x20, 0x7F, 0x3C: return nil
+        default: index += 1
+        }
+    }
+    return nil
+}
+
+extension MarkdownTokenizer {
+    /// The address a `url` token stands for, from the token at `range` of `line`, a line
+    /// without its line break. `inLinkDestination` tells whether a `link` token encloses
+    /// the token.
+    ///
+    /// A token covers the text as written, so its backslash escapes are resolved, as
+    /// CommonMark does in link destinations and in plain text: `\_` stands for `_`. A
+    /// backslash ending the token that escapes the character after it is dropped too; the
+    /// detector ends a URL in plain text before an escaped `.` or `)` but not before the
+    /// backslash. Inside an autolink backslashes are literal, as in CommonMark. Entity
+    /// references such as `&amp;` stay as written, since the tokenizer recognizes none.
+    public static func address(ofURLTokenAt range: Range<Int>, in line: String, inLinkDestination: Bool) -> String {
+        let units = Array(line.utf16)
+        let token = Array(units[range])
+        func escaped(_ index: Int) -> Bool {
+            var start = index
+            while start > 0, units[start - 1] == backslash { start -= 1 }
+            return (index - start) % 2 == 1
+        }
+        let autolink = !inLinkDestination && range.lowerBound > 0 && units[range.lowerBound - 1] == 0x3C
+            && autolinkEnd(in: units, from: range.lowerBound - 1, before: units.count) == range.upperBound + 1
+            && !escaped(range.lowerBound - 1)
+        if autolink { return String(decoding: token, as: UTF16.self) }
+        var address: [UInt16] = []
+        var index = 0
+        while index < token.count {
+            if token[index] == backslash {
+                let next = index + 1 < token.count ? token[index + 1]
+                    : range.upperBound < units.count ? units[range.upperBound] : nil
+                if let next, isASCIIPunctuation(next) {
+                    if index + 1 < token.count { address.append(next) }
+                    index += 2
+                    continue
+                }
+            }
+            address.append(token[index])
+            index += 1
+        }
+        return String(decoding: address, as: UTF16.self)
+    }
+}
+
 /// Finds the constructs of the lines within one line of the document.
 private struct Scanner {
     let units: [UInt16]
@@ -204,10 +275,6 @@ private struct Scanner {
         var index = index
         while isBlank(index, before: end) { index += 1 }
         return index
-    }
-    private func isASCIIPunctuation(_ unit: UInt16) -> Bool {
-        (0x21...0x2F).contains(unit) || (0x3A...0x40).contains(unit) || (0x5B...0x60).contains(unit)
-            || (0x7B...0x7E).contains(unit)
     }
     /// Whether a backslash at `index` escapes the next character.
     func isEscape(_ index: Int, before end: Int) -> Bool {
@@ -298,7 +365,7 @@ private struct Scanner {
                     index = close + run - index
                 } else { index = run }
             case 0x3C:
-                if let autolink = autolinkEnd(from: index, before: end) {
+                if let autolink = autolinkEnd(in: units, from: index, before: end) {
                     autolinks.append(index + 1..<autolink - 1)
                     constructs.append(index..<autolink)
                     index = autolink
@@ -385,29 +452,6 @@ private struct Scanner {
             } else { run += 1 }
         }
         return markers
-    }
-
-    /// The end of an autolink `<scheme:…>` starting at `start`: a scheme of 2 to 32 ASCII
-    /// letters, digits, `+`, `.` or `-` starting with a letter, then characters other than
-    /// spaces, controls, `<` and `>`.
-    private func autolinkEnd(from start: Int, before end: Int) -> Int? {
-        func isLetter(_ unit: UInt16) -> Bool { (0x41...0x5A).contains(unit) || (0x61...0x7A).contains(unit) }
-        var index = start + 1
-        guard index < end, isLetter(units[index]) else { return nil }
-        index += 1
-        while index < end, isLetter(units[index]) || (0x30...0x39).contains(units[index]) || [0x2B, 0x2E, 0x2D].contains(units[index]) {
-            index += 1
-        }
-        guard (2...32).contains(index - start - 1), index < end, units[index] == 0x3A else { return nil }
-        index += 1
-        while index < end {
-            switch units[index] {
-            case 0x3E: return index + 1
-            case 0...0x20, 0x7F, 0x3C: return nil
-            default: index += 1
-            }
-        }
-        return nil
     }
 
     /// The end of a link's `(destination "title")` starting at `start`, and the

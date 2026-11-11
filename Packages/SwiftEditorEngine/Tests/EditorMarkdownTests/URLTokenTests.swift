@@ -376,3 +376,55 @@ import Foundation
         #expect(detector.detections == 21)
     }
 }
+
+/// The address of each `url` token of a one-line `text`.
+@MainActor func addresses(_ text: String) throws -> [String] {
+    let all = try tokens(text)
+    return all.filter { $0.kind == .url }.map { url in
+        let inLink = all.contains { $0.kind == .link && $0.range.lowerBound <= url.range.lowerBound && url.range.upperBound <= $0.range.upperBound }
+        return MarkdownTokenizer.address(ofURLTokenAt: url.range, in: text, inLinkDestination: inLink)
+    }
+}
+
+@Suite @MainActor struct URLAddressTests {
+    @Test func escapesAreResolvedInDestinationsAndPlainText() throws {
+        #expect(try addresses(#"[a](https://example.com/a\_b\(c\))"#) == ["https://example.com/a_b(c)"])
+        #expect(try addresses(#"[a](<https://example.com/a\>b>)"#) == ["https://example.com/a>b"])
+        #expect(try addresses(#"https://example.com/M\*A\*S\*H"#) == ["https://example.com/M*A*S*H"])
+        // A backslash before anything but ASCII punctuation, or escaped itself, stays.
+        #expect(try addresses(#"[a](https://example.com/a\b\\c\あ)"#) == [#"https://example.com/a\b\c\あ"#])
+    }
+
+    @Test func aBackslashEndingATokenThatEscapesTheNextCharacterIsDropped() throws {
+        #expect(try urls(#"https://example.com/foo\. x"#) == [#"https://example.com/foo\"#])
+        #expect(try addresses(#"https://example.com/foo\. x"#) == ["https://example.com/foo"])
+        #expect(try addresses(#"(https://example.com/a\)"#) == ["https://example.com/a"])
+        // The character a dropped backslash escapes lies outside the token, even a backslash.
+        #expect(MarkdownTokenizer.address(ofURLTokenAt: 0..<21, in: #"https://example.com/\\."#, inLinkDestination: false) == "https://example.com/")
+        // One before no punctuation stays.
+        #expect(MarkdownTokenizer.address(ofURLTokenAt: 0..<20, in: #"https://example.com\a"#, inLinkDestination: false) == #"https://example.com\"#)
+        #expect(MarkdownTokenizer.address(ofURLTokenAt: 0..<20, in: #"https://example.com\"#, inLinkDestination: false) == #"https://example.com\"#)
+    }
+
+    @Test func backslashesInsideAnAutolinkAreLiteral() throws {
+        #expect(try addresses(#"<https://example.com/a\_b>"#) == [#"https://example.com/a\_b"#])
+        #expect(try addresses(#"\\<https://example.com/a\_b>"#) == [#"https://example.com/a\_b"#])
+        #expect(try addresses(#"[x](https://a.example)<https://example.com/a\_b>"#) == ["https://a.example", #"https://example.com/a\_b"#])
+        // An escaped `<` starts no autolink.
+        #expect(try addresses(#"\<https://example.com/a\_b>"#) == ["https://example.com/a_b"])
+        // Nor does one that does not make an autolink, as a space inside breaks it.
+        #expect(try addresses(#"<https://example.com/a\_b c>"#) == [#"https://example.com/a_b c"#])
+    }
+
+    @Test func everyASCIIPunctuationCharacterAndNoOtherIsEscapable() {
+        let text = (0x20...0x7F).map { #"\"# + String(UnicodeScalar(UInt8($0))) }.joined()
+        let punctuation = Set(##"!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"##)
+        let expected = (0x20...0x7F).map { code -> String in
+            let character = Character(UnicodeScalar(UInt8(code)))
+            return punctuation.contains(character) ? String(character) : #"\"# + String(character)
+        }.joined()
+        let line = "https://example.com/" + text
+        let range = 0..<line.utf16.count
+        #expect(MarkdownTokenizer.address(ofURLTokenAt: range, in: line, inLinkDestination: true) == "https://example.com/" + expected)
+    }
+}

@@ -119,9 +119,12 @@ extension EditorView: NSDraggingSource {
 
   /// 選択の上の押下は、キーでないウィンドウでも受け取ってドラッグを始められるようにする。
   /// ウィンドウを前に出すのは、ドラッグを始めずに離したときまで待つ (NSTextView と同じ)。
+  /// URL の上の Cmd+クリックも、選択の中かどうかによらず受け取って URL を開く。
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
     guard let event else { return false }
-    return selectionContains(containerPoint(event))
+    let point = containerPoint(event)
+    return selectionContains(point)
+      || (event.clickCount == 1 && Self.isLinkClick(event) && link(at: point) != nil)
   }
 
   override func shouldDelayWindowOrdering(for event: NSEvent) -> Bool {

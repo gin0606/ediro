@@ -150,11 +150,7 @@ final class EditorLayout {
   func characterIndex(at point: CGPoint) -> Int? {
     let string = storage.mutableString
     guard string.length > 0 else { return nil }
-    func contains(_ index: Int) -> Bool {
-      selectionRects(string.rangeOfComposedCharacterSequence(at: index)).contains {
-        $0.minX <= point.x && point.x < $0.maxX && $0.minY <= point.y && point.y < $0.maxY
-      }
-    }
+    func contains(_ index: Int) -> Bool { character(at: index, contains: point) }
     // 点に最も近い境界の前後の文字。右から左に書く文字や折り返しでも、矩形で確かめる。
     let boundary = offset(at: point)
     for index in [boundary - 1, boundary] where 0 <= index && index < string.length {
@@ -172,6 +168,104 @@ final class EditorLayout {
     // 改行などで終わらない最後の行の右側は、どの文字でもない。
     let terminated = Self.lineBreaks.contains(string.character(at: NSMaxRange(line.range) - 1))
     return NSMaxRange(line.range) == string.length && !terminated ? nil : end
+  }
+
+  /// 点が矩形に入る文字のオフセット。`characterIndex(at:)` と違い、行の外側の点を端の文字に
+  /// 寄せず、どの文字にも掛からなければ nil。マウスが動くたびに呼ぶので、`characterIndex(at:)`
+  /// のように本文全体の表示行を並べることはしない。
+  func characterIndex(containing point: CGPoint) -> Int? {
+    let string = storage.mutableString
+    guard string.length > 0 else { return nil }
+    let boundary = offset(at: point)
+    for index in [boundary - 1, boundary]
+    where 0 <= index && index < string.length && character(at: index, contains: point) {
+      return string.rangeOfComposedCharacterSequence(at: index).location
+    }
+    // 右から左に書く文字の端や、幅の無い文字の前の文字は、点に最も近い境界の前後に無いことが
+    // ある。点がその表示行の文字の範囲に入るときだけ、行の文字を辿る。
+    guard let location = location(min(boundary, string.length - 1)),
+      let fragment = layoutManager.textLayoutFragment(for: location)
+    else { return nil }
+    let origin = fragment.layoutFragmentFrame.origin
+    guard
+      let line = fragment.textLineFragments.first(where: {
+        $0.typographicBounds.offsetBy(dx: origin.x, dy: origin.y).contains(point)
+      })
+    else { return nil }
+    var index = offset(fragment.rangeInElement.location) + line.characterRange.location
+    let end = index + line.characterRange.length
+    while index < end {
+      let character = string.rangeOfComposedCharacterSequence(at: index)
+      if self.character(at: index, contains: point) { return character.location }
+      index = NSMaxRange(character)
+    }
+    return nil
+  }
+
+  /// 範囲の文字を覆う矩形のうち、`bounds` に掛かる表示行のものと、範囲の文字を含む
+  /// 表示行をどれも外さなかったか。範囲の選択の矩形と違い、折り返した行の右の余白を含めない。
+  /// 表示行ごとに、その行に入る部分の選択の矩形を使う。範囲は一つの段落に収まること (url
+  /// トークンは段落をまたがない)。
+  func characterRects(_ range: NSRange, in bounds: CGRect) -> (rects: [CGRect], isComplete: Bool) {
+    guard range.length > 0, let start = location(range.location),
+      let fragment = layoutManager.textLayoutFragment(for: start)
+    else { return ([], true) }
+    let string = storage.mutableString
+    let origin = fragment.layoutFragmentFrame.origin
+    let base = offset(fragment.rangeInElement.location)
+    // 長い段落は表示行が多いので、`bounds` に掛かる最初の表示行を二分探索で探す。
+    let lines = fragment.textLineFragments
+    var first = 0
+    var after = lines.count
+    while first < after {
+      let middle = (first + after) / 2
+      if lines[middle].typographicBounds.maxY + origin.y <= bounds.minY {
+        first = middle + 1
+      } else {
+        after = middle
+      }
+    }
+    var rects: [CGRect] = []
+    var isComplete = first == 0 || base + NSMaxRange(lines[first - 1].characterRange) <= range.location
+    for line in lines[first...] {
+      let lineRange = NSRange(
+        location: base + line.characterRange.location, length: line.characterRange.length)
+      guard lineRange.location < NSMaxRange(range) else { break }
+      guard line.typographicBounds.minY + origin.y < bounds.maxY else {
+        isComplete = false
+        break
+      }
+      let characters = NSIntersectionRange(range, lineRange)
+      guard characters.length > 0 else { continue }
+      let segments = selectionRects(characters)
+      guard segments.contains(where: { $0.width == 0 }) else {
+        rects += segments
+        continue
+      }
+      // 幅の無い文字の位置で折り返した行では、その手前までの範囲の矩形が幅 0 になることが
+      // あるので、文字ごとの矩形をまとめる。
+      var index = characters.location
+      while index < NSMaxRange(characters) {
+        let character = string.rangeOfComposedCharacterSequence(at: index)
+        for rect in selectionRects(character) where rect.width > 0 {
+          if let last = rects.last, last.minY == rect.minY, last.height == rect.height,
+            rect.minX <= last.maxX + 0.5, last.minX <= rect.maxX + 0.5
+          {
+            rects[rects.count - 1] = last.union(rect)
+          } else {
+            rects.append(rect)
+          }
+        }
+        index = NSMaxRange(character)
+      }
+    }
+    return (rects, isComplete)
+  }
+
+  private func character(at index: Int, contains point: CGPoint) -> Bool {
+    selectionRects(storage.mutableString.rangeOfComposedCharacterSequence(at: index)).contains {
+      $0.minX <= point.x && point.x < $0.maxX && $0.minY <= point.y && point.y < $0.maxY
+    }
   }
 
   private func last(of range: NSRange) -> Int {

@@ -66,6 +66,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   var writingTools = WritingToolsState()
   /// ドラッグ＆ドロップと自動スクロールの状態。
   var dragAndDrop = DragAndDropState()
+  /// Cmd+クリックで開く URL と、そのツールチップ。
+  var links = LinkState()
   let inputAssistance = InputAssistanceState()
   private lazy var engineUndoManager = EditorUndoManager(view: self)
   override var undoManager: UndoManager? { engineUndoManager }
@@ -90,6 +92,11 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     attach()
     setUpWritingTools()
     registerForDraggedTypes(Self.readableTypes)
+    // URL のツールチップを付けるため、マウスの位置を追う。
+    addTrackingArea(
+      NSTrackingArea(
+        rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+        owner: self))
   }
 
   /// 本文を持つ Document。Markdown の行トークンはエンジンが編集のたびに作り直す。
@@ -194,6 +201,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   /// 本文か装飾が変わった後に、組み直して描き直す。
   func refreshLayout() {
+    removeLinkToolTip()
     layout.ensureLayout()
     setFrameSize(frame.size)
     needsDisplay = true
@@ -246,7 +254,10 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     let visible = enclosingScrollView?.contentSize.height ?? 0
     let height = max(layout.usedHeight + inset.height * 2, visible)
     super.setFrameSize(NSSize(width: newSize.width, height: height))
-    if layout.container.size.width != width { writingToolsLayoutDidChange() }
+    if layout.container.size.width != width {
+      removeLinkToolTip()
+      writingToolsLayoutDidChange()
+    }
     updateCarets()
   }
 
@@ -385,6 +396,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     NotificationCenter.default.removeObserver(self)
+    removeLinkToolTip()
     guard let window else { return }
     if let scroll = enclosingScrollView {
       NotificationCenter.default.addObserver(self, selector: #selector(inputScrollStarted),
@@ -1254,10 +1266,26 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   override func mouseDown(with event: NSEvent) {
     let wasKey = window?.isKeyWindow == true
     window?.makeFirstResponder(self)
+    if event.clickCount == 1 { links.openedInClickSequence = false }
+    // 確定で表示が送られる前に、押した位置の URL を求める。確定は本文を変えない。
+    let link =
+      Self.isLinkClick(event) && !links.openedInClickSequence
+      ? link(at: containerPoint(event)) : nil
     commitCompositionForPointer()
     dragAndDrop.pressedOnSelection = nil
-    // 選択の上を押したときは、ドラッグを始めるか分かるまで選択を変えない。動かさずに離したら
-    // キャレットを置く。
+    links.pressed = nil
+    // URL の上の Cmd+クリックは、ドラッグせずに離したときに URL を開き、キャレットも選択も
+    // 動かさない。選択の中の URL でも開くので、選択の上の押下より先に見る。
+    if let link {
+      links.pressed = (event, link.url, wasKey)
+      return
+    }
+    press(event, wasKey: wasKey)
+  }
+
+  /// 選択の上を押したときは、ドラッグを始めるか分かるまで選択を変えない。動かさずに離したら
+  /// キャレットを置く。それ以外はその場でクリックする。
+  private func press(_ event: NSEvent, wasKey: Bool) {
     if event.clickCount == 1, !event.modifierFlags.contains(.shift),
       selectionContains(containerPoint(event))
     {
@@ -1305,10 +1333,16 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   override func mouseDragged(with event: NSEvent) {
+    // URL の上から始めたドラッグは開かず、Cmd を押さずに押したときと同じく扱う。キーでない
+    // ウィンドウでは、選択の上の押下でなければ受け取らないので、何もしない。
+    if let pressed = links.pressed {
+      guard Self.draggedFar(from: pressed.event, to: event) else { return }
+      links.pressed = nil
+      guard pressed.wasKey || selectionContains(containerPoint(pressed.event)) else { return }
+      press(pressed.event, wasKey: pressed.wasKey)
+    }
     if let pressed = dragAndDrop.pressedOnSelection {
-      let start = pressed.locationInWindow
-      let point = event.locationInWindow
-      guard hypot(point.x - start.x, point.y - start.y) >= Self.dragThreshold else { return }
+      guard Self.draggedFar(from: pressed, to: event) else { return }
       dragAndDrop.pressedOnSelection = nil
       beginDraggingSelection(with: event)
       return
@@ -1320,8 +1354,19 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     updateAutoscroll(at: event.locationInWindow, mode: .selecting)
   }
 
+  private static func draggedFar(from pressed: NSEvent, to event: NSEvent) -> Bool {
+    let start = pressed.locationInWindow
+    let point = event.locationInWindow
+    return hypot(point.x - start.x, point.y - start.y) >= dragThreshold
+  }
+
   override func mouseUp(with event: NSEvent) {
     stopAutoscroll()
+    if let pressed = links.pressed {
+      links.pressed = nil
+      links.openedInClickSequence = true
+      if !(pressed.url.map(links.open) ?? false) { links.beep() }
+    }
     if let pressed = dragAndDrop.pressedOnSelection {
       dragAndDrop.pressedOnSelection = nil
       // キーでないウィンドウへの押下は、ウィンドウを前に出すだけにする。

@@ -360,7 +360,9 @@ emphasis and line-start markers, so it includes the text inside strong, emphasis
 headings and blockquotes, but never code blocks. `NSDataDetector` finds the URLs there,
 and only those written starting with `http://` or `https://` count; a URL never extends
 beyond its span of plain text, and the detector's result is not adjusted. A token covers
-the text as written, backslash escapes included.
+the text as written, backslash escapes included;
+`MarkdownTokenizer.address(ofURLTokenAt:in:inLinkDestination:)` gives the address it
+stands for, with the escapes resolved except inside an autolink, as CommonMark does.
 
 The detector's results depend on text far from them, and a long line takes it longer than
 a keystroke may, so it sees a window around each `http://` or `https://` instead of the
