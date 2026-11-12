@@ -1,4 +1,5 @@
 import AppKit
+import EdiroCore
 import Testing
 
 @testable import EdiroUI
@@ -8,7 +9,13 @@ extension AppKitTests {
     private func editor(_ text: String, width: CGFloat = 400, height: CGFloat = 300)
       -> (NSWindow, EditorTextController, EditorView)
     {
-      let controller = EditorTextController(state: makeState(text: text))
+      editor(state: makeState(text: text), width: width, height: height)
+    }
+
+    private func editor(state: AppState, width: CGFloat = 400, height: CGFloat = 300)
+      -> (NSWindow, EditorTextController, EditorView)
+    {
+      let controller = EditorTextController(state: state)
       let window = NSWindow(
         contentRect: NSRect(x: 80, y: 100, width: width, height: height), styleMask: [.titled],
         backing: .buffered, defer: false)
@@ -20,70 +27,144 @@ extension AppKitTests {
       return (window, controller, controller.editorView)
     }
 
-    @Test(arguments: ["", "abc", "ab😀e\u{301}\ncd\n", "first\nsecond", "日本語\n\n末尾"])
-    func textAttributesMatchReference(text: String) throws {
+    /// 本文と、本文の位置や行の番号から引いた値の期待値。値は置き換え前のエディタだった
+    /// NSTextView の結果に合わせてある。
+    struct TextCase: CustomTestStringConvertible, Sendable {
+      let text: String
+      /// `accessibilityRange(for:)` の、-1 から本文の長さ + 1 までの位置の結果。
+      let characters: [NSRange]
+      /// `accessibilityLine(for:)` の、-1 から本文の長さ + 1 までの位置の結果。
+      let lines: [Int]
+      /// `accessibilityRange(forLine:)` の、-1 から 5 行目までの結果。
+      let lineRanges: [NSRange]
+      /// 本文の先頭のキャレット、本文全体の選択、本文の末尾のキャレットのそれぞれでの
+      /// `accessibilityInsertionPointLineNumber()`。
+      let insertionPointLines: [Int]
+
+      var testDescription: String { text.debugDescription }
+    }
+
+    nonisolated static let textCases: [TextCase] = {
+      func r(_ location: Int, _ length: Int) -> NSRange {
+        NSRange(location: location, length: length)
+      }
+      // 本文の外の位置と行は、空の範囲と 0 行目になる。
+      return [
+        TextCase(
+          text: "", characters: [r(0, 0), r(0, 0), r(0, 0)], lines: [0, 0, 0],
+          lineRanges: Array(repeating: r(0, 0), count: 7),
+          // 空の本文には挿入位置の行が無い。
+          insertionPointLines: [NSNotFound, NSNotFound, NSNotFound]),
+        TextCase(
+          text: "abc", characters: [r(0, 0), r(0, 1), r(1, 1), r(2, 1), r(0, 0), r(0, 0)],
+          lines: [0, 0, 0, 0, 0, 0],
+          lineRanges: [r(0, 0), r(0, 3), r(0, 0), r(0, 0), r(0, 0), r(0, 0), r(0, 0)],
+          insertionPointLines: [0, NSNotFound, 0]),
+        // 合成文字は文字全体の範囲になる。末尾の改行の後には空の行がある。
+        TextCase(
+          text: "ab😀e\u{301}\ncd\n",
+          characters: [
+            r(0, 0), r(0, 1), r(1, 1), r(2, 2), r(2, 2), r(4, 2), r(4, 2), r(6, 1), r(7, 1),
+            r(8, 1), r(9, 1), r(0, 0), r(0, 0),
+          ],
+          lines: [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 0],
+          lineRanges: [r(0, 0), r(0, 7), r(7, 3), r(10, 0), r(0, 0), r(0, 0), r(0, 0)],
+          insertionPointLines: [0, NSNotFound, 2]),
+        TextCase(
+          text: "first\nsecond",
+          characters: [r(0, 0)] + (0..<12).map { r($0, 1) } + [r(0, 0), r(0, 0)],
+          lines: [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0],
+          lineRanges: [r(0, 0), r(0, 6), r(6, 6), r(0, 0), r(0, 0), r(0, 0), r(0, 0)],
+          insertionPointLines: [0, NSNotFound, 1]),
+        TextCase(
+          text: "日本語\n\n末尾",
+          characters: [r(0, 0)] + (0..<7).map { r($0, 1) } + [r(0, 0), r(0, 0)],
+          lines: [0, 0, 0, 0, 0, 1, 2, 2, 2, 0],
+          lineRanges: [r(0, 0), r(0, 4), r(4, 1), r(5, 2), r(0, 0), r(0, 0), r(0, 0)],
+          insertionPointLines: [0, NSNotFound, 2]),
+      ]
+    }()
+
+    @Test(arguments: textCases)
+    func textAttributesFollowCharactersAndLines(expected: TextCase) throws {
+      let text = expected.text
       let (window, controller, view) = editor(text)
       defer {
         window.close()
         withExtendedLifetime(controller) {}
       }
-      let reference = ReferenceTextView(text: text)
-      defer { reference.close() }
-      let expected = reference.textView
       #expect(view.isAccessibilityElement())
-      #expect(view.accessibilityRole() == expected.accessibilityRole())
-      #expect(view.accessibilityValue() as? String == expected.accessibilityValue())
-      #expect(view.accessibilityNumberOfCharacters() == expected.accessibilityNumberOfCharacters())
+      #expect(view.accessibilityRole() == .textArea)
+      #expect(view.accessibilityValue() as? String == text)
       let length = text.utf16.count
-      for index in -1...(length + 1) {
-        #expect(view.accessibilityRange(for: index) == expected.accessibilityRange(for: index))
-        #expect(view.accessibilityLine(for: index) == expected.accessibilityLine(for: index))
-      }
-      for line in -1...5 {
-        #expect(
-          view.accessibilityRange(forLine: line) == expected.accessibilityRange(forLine: line))
-      }
+      #expect(view.accessibilityNumberOfCharacters() == length)
+      #expect((-1...(length + 1)).map { view.accessibilityRange(for: $0) } == expected.characters)
+      #expect((-1...(length + 1)).map { view.accessibilityLine(for: $0) } == expected.lines)
+      #expect((-1...5).map { view.accessibilityRange(forLine: $0) } == expected.lineRanges)
+      #expect(view.accessibilityString(for: NSRange(location: 0, length: 0)) == "")
+      #expect(view.accessibilityString(for: NSRange(location: 0, length: length)) == text)
+      #expect(view.accessibilityString(for: NSRange(location: length, length: 0)) == "")
+      // 本文からはみ出す範囲は読めない。
       for range in [
-        NSRange(location: 0, length: 0), NSRange(location: 0, length: length),
-        NSRange(location: length, length: 0), NSRange(location: length, length: 1),
-        NSRange(location: NSNotFound, length: 1), NSRange(location: 1, length: Int.max),
+        NSRange(location: length, length: 1), NSRange(location: NSNotFound, length: 1),
+        NSRange(location: 1, length: Int.max),
       ] {
-        #expect(view.accessibilityString(for: range) == expected.accessibilityString(for: range))
+        #expect(view.accessibilityString(for: range) == nil, "\(range)")
       }
       let selections = [
         NSRange(location: 0, length: 0), NSRange(location: 0, length: length),
         NSRange(location: length, length: 0),
       ]
-      for range in selections {
+      for (range, line) in zip(selections, expected.insertionPointLines) {
         view.setAccessibilitySelectedTextRange(range)
-        expected.setAccessibilitySelectedTextRange(range)
-        #expect(view.accessibilitySelectedText() == expected.accessibilitySelectedText())
-        #expect(view.accessibilitySelectedTextRange() == expected.accessibilitySelectedTextRange())
-        #expect(
-          view.accessibilitySelectedTextRanges() == expected.accessibilitySelectedTextRanges())
-        #expect(
-          view.accessibilityInsertionPointLineNumber()
-            == expected.accessibilityInsertionPointLineNumber())
+        #expect(view.accessibilitySelectedText() == (text as NSString).substring(with: range))
+        #expect(view.accessibilitySelectedTextRange() == range)
+        #expect(view.accessibilitySelectedTextRanges()?.map(\.rangeValue) == [range])
+        #expect(view.accessibilityInsertionPointLineNumber() == line, "\(range)")
       }
     }
 
-    @Test func attributedTextAndStylesMatchReference() throws {
-      let (window, controller, view) = editor("plain **bold** and `code`\n")
+    @Test func attributedTextExposesStorageFontsAndThemeColors() throws {
+      let state = makeState(text: "plain **bold** and `code`\n")
+      let (window, controller, view) = editor(state: state)
       defer {
         window.close()
         withExtendedLifetime(controller) {}
       }
-      let reference = ReferenceTextView(text: view.text)
-      defer { reference.close() }
-      reference.textView.textStorage?.setAttributedString(view.layout.storage)
       let full = NSRange(location: 0, length: view.text.utf16.count)
       let actual = try #require(view.accessibilityAttributedString(for: full))
-      let expected = try #require(reference.textView.accessibilityAttributedString(for: full))
-      #expect(actual == expected)
-      for index in -1...full.length {
+      #expect(actual.string == view.text)
+      // 装飾の区切りごとに、書体と色の揃った範囲になる。
+      let runs = [
+        NSRange(location: 0, length: 6), NSRange(location: 6, length: 8),
+        NSRange(location: 14, length: 5), NSRange(location: 19, length: 6),
+        NSRange(location: 25, length: 1),
+      ]
+      let styles = (-1...full.length).map { view.accessibilityStyleRange(for: $0) }
+      let empty = NSRange(location: 0, length: 0)
+      #expect(styles == [empty] + runs.flatMap { Array(repeating: $0, count: $0.length) } + [empty])
+
+      let foreground = state.theme.editorForeground
+      let code = try #require(SyntaxPalette(theme: state.theme).style(for: .inlineCode).color)
+      #expect(code != foreground)
+      for (run, color) in zip(runs, [foreground, foreground, foreground, code, foreground]) {
+        let attributes = actual.attributes(at: run.location, effectiveRange: nil)
+        let font = try #require(
+          attributes[.accessibilityFont] as? [NSAccessibility.FontAttributeKey: Any])
+        let storageFont = try #require(
+          view.layout.storage.attribute(.font, at: run.location, effectiveRange: nil) as? NSFont)
+        #expect(font[.fontName] as? String == storageFont.fontName, "\(run)")
+        #expect(font[.fontSize] as? CGFloat == storageFont.pointSize, "\(run)")
+        // NSTextView と同じく、色空間は本文の色のもの (sRGB) から較正済み RGB に置き換わり、
+        // 成分の値だけが引き継がれる。
+        let value = try #require(attributes[.accessibilityForegroundColor])
+        let components = try #require((value as! CGColor).components).map(Double.init)
+        let expected = [color.red, color.green, color.blue, color.alpha]
         #expect(
-          view.accessibilityStyleRange(for: index)
-            == reference.textView.accessibilityStyleRange(for: index))
+          components.count == 4 && zip(components, expected).allSatisfy { abs($0 - $1) < 0.01 },
+          "\(run) \(components) \(expected)")
+        #expect(
+          attributes[.accessibilityAlignment] as? Int == NSTextAlignment.left.rawValue, "\(run)")
       }
       #expect(view.accessibilityAttributedString(for: NSRange(location: 0, length: 0)) == nil)
       #expect(
@@ -129,25 +210,22 @@ extension AppKitTests {
         window.close()
         withExtendedLifetime(controller) {}
       }
-      let reference = ReferenceTextView(text: view.text)
-      defer { reference.close() }
       let range = NSRange(location: 4, length: 3)
       view.setAccessibilitySelectedTextRange(range)
-      reference.textView.setAccessibilitySelectedTextRange(range)
+      // 本文全体でも選択でも、置き換えた文字列の後ろにキャレットを置く。
       if replaceValue {
         view.setAccessibilityValue("new😀")
-        reference.textView.setAccessibilityValue("new😀")
       } else {
         view.setAccessibilitySelectedText("new😀")
-        reference.textView.setAccessibilitySelectedText("new😀")
       }
-      #expect(view.text == reference.textView.string)
-      #expect(view.selectedRange() == reference.textView.selectedRange())
+      let (edited, end) = replaceValue ? ("new😀", 5) : ("abc new😀", 9)
+      #expect(view.text == edited)
+      #expect(view.selectedRange() == NSRange(location: end, length: 0))
       view.undo(nil)
       #expect(view.text == "abc def")
       #expect(view.selectedRange() == range)
       view.redo(nil)
-      #expect(view.text == reference.textView.string)
+      #expect(view.text == edited)
     }
 
     @Test func markedTextIsReadableAndWritable() {
@@ -156,26 +234,16 @@ extension AppKitTests {
         window.close()
         withExtendedLifetime(controller) {}
       }
-      let reference = ReferenceTextView(text: view.text)
-      defer { reference.close() }
-      let range = NSRange(location: 6, length: 0)
-      view.setAccessibilitySelectedTextRange(range)
-      reference.textView.setAccessibilitySelectedTextRange(range)
+      view.setAccessibilitySelectedTextRange(NSRange(location: 6, length: 0))
       let missing = NSRange(location: NSNotFound, length: 0)
       view.setMarkedText(
         "にほん", selectedRange: NSRange(location: 1, length: 1), replacementRange: missing)
-      reference.textView.setMarkedText(
-        "にほん", selectedRange: NSRange(location: 1, length: 1), replacementRange: missing)
       #expect(view.hasMarkedText())
+      // 変換中の文字も本文として読め、選択は変換中の文字の中の選択になる。
       #expect(view.accessibilityValue() as? String == "start にほん")
-      #expect(view.accessibilityValue() as? String == reference.textView.accessibilityValue())
-      #expect(
-        view.accessibilityNumberOfCharacters()
-          == reference.textView.accessibilityNumberOfCharacters())
-      #expect(view.accessibilitySelectedText() == reference.textView.accessibilitySelectedText())
-      #expect(
-        view.accessibilitySelectedTextRange() == reference.textView.accessibilitySelectedTextRange()
-      )
+      #expect(view.accessibilityNumberOfCharacters() == 9)
+      #expect(view.accessibilitySelectedText() == "ほ")
+      #expect(view.accessibilitySelectedTextRange() == NSRange(location: 7, length: 1))
       view.setAccessibilitySelectedText("本")
       #expect(!view.hasMarkedText())
       #expect(view.text == "start に本ん")
@@ -264,18 +332,17 @@ extension AppKitTests {
       #expect(posted == [.valueChanged, .selectedTextChanged])
     }
 
+    /// 合成文字やサロゲートペアの途中から始まる選択は、その文字の先頭から始める。
     @Test(arguments: ["a😀b", "ae\u{301}b"])
     func selectionStartsAtComposedCharacterBoundary(text: String) {
       let view = EditorView(text: text)
-      let reference = ReferenceTextView(text: text)
-      defer { reference.close() }
-      for range in [
-        NSRange(location: 2, length: 0), NSRange(location: 2, length: 1),
-        NSRange(location: 2, length: 2),
+      for (range, expected) in [
+        (NSRange(location: 2, length: 0), NSRange(location: 1, length: 0)),
+        (NSRange(location: 2, length: 1), NSRange(location: 1, length: 2)),
+        (NSRange(location: 2, length: 2), NSRange(location: 1, length: 3)),
       ] {
         view.setAccessibilitySelectedTextRange(range)
-        reference.textView.setAccessibilitySelectedTextRange(range)
-        #expect(view.selectedRange() == reference.textView.selectedRange())
+        #expect(view.selectedRange() == expected, "\(range)")
       }
       view.setAccessibilitySelectedTextRanges([
         NSValue(range: NSRange(location: 2, length: 0)),
@@ -287,41 +354,23 @@ extension AppKitTests {
         ])
     }
 
-    @Test func pointsInMarginsMatchReference() {
+    /// 本文の左の余白は先頭の文字に当たり、右や上下の余白はどの文字にも当たらない。
+    @Test func pointsInMarginsHitOnlyTheLeftInset() {
       let (window, controller, view) = editor("abc\ndef")
       defer {
         window.close()
         withExtendedLifetime(controller) {}
       }
-      let reference = ReferenceTextView(text: view.text)
-      defer { reference.close() }
-      let actualFirst = view.accessibilityFrame(for: NSRange(location: 0, length: 1))
-      let expectedFirst = reference.textView.accessibilityFrame(
-        for: NSRange(location: 0, length: 1))
-      let actualLast = view.accessibilityFrame(for: NSRange(location: 6, length: 1))
-      let expectedLast = reference.textView.accessibilityFrame(for: NSRange(location: 6, length: 1))
-      let points = [
-        (
-          NSPoint(x: actualFirst.maxX + 100, y: actualFirst.midY),
-          NSPoint(x: expectedFirst.maxX + 100, y: expectedFirst.midY)
-        ),
-        (
-          NSPoint(x: actualFirst.minX - 10, y: actualFirst.midY),
-          NSPoint(x: expectedFirst.minX - 10, y: expectedFirst.midY)
-        ),
-        (
-          NSPoint(x: actualFirst.midX, y: actualFirst.maxY + 10),
-          NSPoint(x: expectedFirst.midX, y: expectedFirst.maxY + 10)
-        ),
-        (
-          NSPoint(x: actualLast.midX, y: actualLast.minY - 10),
-          NSPoint(x: expectedLast.midX, y: expectedLast.minY - 10)
-        ),
-      ]
-      for (index, pair) in points.enumerated() {
-        let range = NSRange(location: 0, length: index == 1 ? 1 : 0)
-        #expect(reference.textView.accessibilityRange(for: pair.1) == range)
-        #expect(view.accessibilityRange(for: pair.0) == range)
+      let first = view.accessibilityFrame(for: NSRange(location: 0, length: 1))
+      let last = view.accessibilityFrame(for: NSRange(location: 6, length: 1))
+      let empty = NSRange(location: 0, length: 0)
+      for (point, expected) in [
+        (NSPoint(x: first.maxX + 100, y: first.midY), empty),
+        (NSPoint(x: first.minX - 10, y: first.midY), NSRange(location: 0, length: 1)),
+        (NSPoint(x: first.midX, y: first.maxY + 10), empty),
+        (NSPoint(x: last.midX, y: last.minY - 10), empty),
+      ] {
+        #expect(view.accessibilityRange(for: point) == expected, "\(point)")
       }
     }
 
