@@ -340,11 +340,6 @@ extension AppKitTests {
       // 入力中のスペルチェックは起動のたびにオフ。文法は、入力中の検査をオンにしたときに一緒に検査する。
       (#selector(EditorView.toggleContinuousSpellChecking(_:)), \.isContinuousSpellCheckingEnabled, false),
       (#selector(EditorView.toggleGrammarChecking(_:)), \.isGrammarCheckingEnabled, true),
-      // 自動スペル修正の既定はシステム設定に従う。
-      (
-        #selector(EditorView.toggleAutomaticSpellingCorrection(_:)), \.isAutomaticSpellingCorrectionEnabled,
-        NSSpellChecker.isAutomaticSpellingCorrectionEnabled
-      ),
       (#selector(EditorView.toggleSmartInsertDelete(_:)), \.smartInsertDeleteEnabled, true),
       (#selector(EditorView.toggleAutomaticQuoteSubstitution(_:)), \.isAutomaticQuoteSubstitutionEnabled, false),
       (#selector(EditorView.toggleAutomaticDashSubstitution(_:)), \.isAutomaticDashSubstitutionEnabled, false),
@@ -380,6 +375,9 @@ extension AppKitTests {
       #expect(checker.smartQuotesType == .yes)
       #expect(checker.smartDashesType == .yes)
       #expect(checker.textReplacementType == .yes)
+      #expect(checker.autocorrectionType == .no)
+      // 置換のパネルで自動スペル修正をオンにされても、実装していないのでオフと伝える。
+      checker.autocorrectionType = .yes
       #expect(checker.autocorrectionType == .no)
       #expect(checker.smartInsertDeleteType == .yes)
       #expect(checker.linkDetectionType == .yes)

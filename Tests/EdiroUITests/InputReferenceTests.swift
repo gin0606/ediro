@@ -134,7 +134,6 @@ extension AppKitTests {
         [(action: Selector, value: KeyPath<EditorView, Bool>, reference: KeyPath<NSTextView, Bool>)] = [
         (#selector(EditorView.toggleContinuousSpellChecking(_:)), \.isContinuousSpellCheckingEnabled, \.isContinuousSpellCheckingEnabled),
         (#selector(EditorView.toggleGrammarChecking(_:)), \.isGrammarCheckingEnabled, \.isGrammarCheckingEnabled),
-        (#selector(EditorView.toggleAutomaticSpellingCorrection(_:)), \.isAutomaticSpellingCorrectionEnabled, \.isAutomaticSpellingCorrectionEnabled),
         (#selector(EditorView.toggleSmartInsertDelete(_:)), \.smartInsertDeleteEnabled, \.smartInsertDeleteEnabled),
         (#selector(EditorView.toggleAutomaticQuoteSubstitution(_:)), \.isAutomaticQuoteSubstitutionEnabled, \.isAutomaticQuoteSubstitutionEnabled),
         (#selector(EditorView.toggleAutomaticDashSubstitution(_:)), \.isAutomaticDashSubstitutionEnabled, \.isAutomaticDashSubstitutionEnabled),

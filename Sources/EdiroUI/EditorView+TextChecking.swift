@@ -30,11 +30,6 @@ extension EditorView: NSChangeSpelling, NSIgnoreMisspelledWords {
     }
   }
 
-  var isAutomaticSpellingCorrectionEnabled: Bool {
-    get { textChecker.settings.automaticSpellingCorrection }
-    set { textChecker.settings.automaticSpellingCorrection = newValue }
-  }
-
   var smartInsertDeleteEnabled: Bool {
     get { textChecker.settings.smartInsertDelete }
     set { textChecker.settings.smartInsertDelete = newValue }
@@ -69,9 +64,6 @@ extension EditorView: NSChangeSpelling, NSIgnoreMisspelledWords {
     isContinuousSpellCheckingEnabled.toggle()
   }
   @objc func toggleGrammarChecking(_ sender: Any?) { isGrammarCheckingEnabled.toggle() }
-  @objc func toggleAutomaticSpellingCorrection(_ sender: Any?) {
-    isAutomaticSpellingCorrectionEnabled.toggle()
-  }
   @objc func toggleSmartInsertDelete(_ sender: Any?) { smartInsertDeleteEnabled.toggle() }
   @objc func toggleAutomaticQuoteSubstitution(_ sender: Any?) {
     isAutomaticQuoteSubstitutionEnabled.toggle()
@@ -94,7 +86,6 @@ extension EditorView: NSChangeSpelling, NSIgnoreMisspelledWords {
     [
       #selector(toggleContinuousSpellChecking(_:)): isContinuousSpellCheckingEnabled,
       #selector(toggleGrammarChecking(_:)): isGrammarCheckingEnabled,
-      #selector(toggleAutomaticSpellingCorrection(_:)): isAutomaticSpellingCorrectionEnabled,
       #selector(toggleSmartInsertDelete(_:)): smartInsertDeleteEnabled,
       #selector(toggleAutomaticQuoteSubstitution(_:)): isAutomaticQuoteSubstitutionEnabled,
       #selector(toggleAutomaticDashSubstitution(_:)): isAutomaticDashSubstitutionEnabled,
@@ -236,8 +227,6 @@ extension EditorView: NSChangeSpelling, NSIgnoreMisspelledWords {
         .separator(),
         toggleItem(#selector(toggleContinuousSpellChecking(_:)), "Check Spelling While Typing"),
         toggleItem(#selector(toggleGrammarChecking(_:)), "Check Grammar With Spelling"),
-        toggleItem(
-          #selector(toggleAutomaticSpellingCorrection(_:)), "Correct Spelling Automatically"),
       ])
   }
 

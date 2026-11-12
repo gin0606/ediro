@@ -111,8 +111,10 @@ extension AppKitTests {
 
     /// 比べる対象から外す項目。Search With Google と Report a Concern は、NSTextView が
     /// private の action で出し、代わりの公開 API が無いので、このエディタは出さない。
+    /// Correct Spelling Automatically は、このエディタが自動スペル修正を実装しないので出さない。
     private static let excludedActions: Set<String> = [
       "_searchWithGoogleFromMenu:", "_invokeProofreadingFeedbackReportConcern:",
+      "toggleAutomaticSpellingCorrection:",
     ]
 
     /// 比べる対象から外すサブメニュー。そのサブメニューが含む action で見分ける。縦書き

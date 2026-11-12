@@ -140,12 +140,11 @@ extension AppKitTests {
       return ["showWritingTools:", "showWritingTools: tag=1", "showWritingTools: tag=2", "---"]
     }
 
-    /// スペルと文法のサブメニュー。自動のスペル修正の既定はシステム設定に従う。
+    /// スペルと文法のサブメニュー。自動スペル修正は実装しないので、その入切を出さない。
     private var spellingLines: [String] {
-      let correction = NSSpellChecker.isAutomaticSpellingCorrectionEnabled ? " on" : ""
-      return [
+      [
         "submenu", "  showGuessPanel:", "  checkSpelling:", "  ---", "  toggleContinuousSpellChecking:",
-        "  toggleGrammarChecking: on", "  toggleAutomaticSpellingCorrection:" + correction,
+        "  toggleGrammarChecking: on",
       ]
     }
 
