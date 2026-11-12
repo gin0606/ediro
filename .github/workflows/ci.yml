@@ -33,11 +33,16 @@ jobs:
       # runner イメージが入れ替わって落ちたときに、ログだけで切り分けられるようにする。
       - name: Show the toolchain
         run: |
+          sw_vers
           xcodebuild -version
           swift --version
 
       - name: Test
         run: swift test
+
+      # エンジンは別のパッケージなので、ルートの swift test には入らない。
+      - name: Test the engine
+        run: swift test --package-path Packages/SwiftEditorEngine
 
       # swift test は配布物の組み立てを通らない。ここで組み立てないと、壊れが
       # タグを push した後にしか分からない。

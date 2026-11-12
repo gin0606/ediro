@@ -13,7 +13,7 @@ brew install --cask gin0606/tap/ediro
 ## 開発
 
 ```sh
-swift test     # テスト
+make test      # テスト
 make run       # 開発用ビルドを起動する (Ediro Dev、橙のアイコン)
 make release   # 日常使いのビルドを .build/Ediro.app に作る
 ```

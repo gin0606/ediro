@@ -168,23 +168,11 @@ extension AppKitTests {
         ("[a](<https://example.com/a b>)", 8, "https://example.com/a%20b"),
         // 自動リンクは括弧の内側を開く。
         ("<https://example.com/a>", 3, "https://example.com/a"),
-        // 見出し・引用・太字・斜体・リストの項目の中の URL
-        ("## https://example.com/h", 6, "https://example.com/h"),
-        ("> https://example.com/q", 5, "https://example.com/q"),
-        ("**https://example.com/b**", 5, "https://example.com/b"),
-        ("*https://example.com/e*", 5, "https://example.com/e"),
-        ("- https://example.com/l", 5, "https://example.com/l"),
-        // URL の終わりは記法の手前で切れる。
-        ("https://en.wikipedia.org/wiki/M*A*S*H", 3, "https://en.wikipedia.org/wiki/M"),
-        // 和文が続くと URL はそこで終わる。URL に使えない文字はパーセントエンコードする。
-        ("https://example.comを参照", 3, "https://example.com"),
+        // URL に使えない文字はパーセントエンコードする。
         (
           "https://ja.wikipedia.org/wiki/日本語。", 31,
           "https://ja.wikipedia.org/wiki/%E6%97%A5%E6%9C%AC%E8%AA%9E"
         ),
-        // URL 全体を半角括弧で囲むと、外側の `)` まで含む (NSDataDetector の区切り)。
-        ("(https://example.com/Foo_(bar))", 3, "https://example.com/Foo_(bar))"),
-        ("HTTPS://Example.com/x", 2, "HTTPS://Example.com/x"),
         ("first\nhttps://example.com/2", 8, "https://example.com/2"),
       ]
       for (text, location, expected) in cases {
@@ -197,17 +185,10 @@ extension AppKitTests {
 
     @Test func バックスラッシュエスケープは自動リンクの中でだけ解かない() throws {
       let cases: [(text: String, click: Int, url: String)] = [
-        (#"[a](https://example.com/a\_b\(c\))"#, 6, "https://example.com/a_b(c)"),
         (#"[a](<https://example.com/a\>b>)"#, 7, "https://example.com/a%3Eb"),
-        (#"https://example.com/M\*A\*S\*H"#, 3, "https://example.com/M*A*S*H"),
-        // 検出器は、エスケープした記号の手前のバックスラッシュまでを URL にする。
-        (#"see https://example.com/foo\. now"#, 8, "https://example.com/foo"),
         // 記号でない文字の前と、エスケープしたバックスラッシュの後のバックスラッシュは残す。
         (#"[a](https://example.com/a\b\\c)"#, 6, "https://example.com/a%5Cb%5Cc"),
         (#"<https://example.com/a\_b>"#, 3, "https://example.com/a%5C_b"),
-        // エスケープした `<` は自動リンクを始めないので、その後ろの URL は普通の文の URL。
-        (#"\<https://example.com/a\_b>"#, 4, "https://example.com/a_b"),
-        (#"\\<https://example.com/a\_b>"#, 5, "https://example.com/a%5C_b"),
         // 直前で終わるリンクの中ではない。
         (#"[x](https://a.example)<https://example.com/a\_b>"#, 26, "https://example.com/a%5C_b"),
       ]
@@ -466,18 +447,14 @@ extension AppKitTests {
     // MARK: - これまでどおりのクリック
 
     nonisolated static let plainClickScenarios: [PlainClickScenario] = [
-      // スキームの無い URL とメールアドレス
+      // スキームの無い URL と、http・https でないスキームの URL
       .init("see example.com now", click: 6),
-      .init("see www.example.com now", click: 8),
-      .init("mail a@example.com now", click: 8),
-      .init("see mailto:a@example.com now", click: 8),
       .init("see ftp://example.com now", click: 8),
       // Markdown のリンクのラベルと記号、自動リンクの括弧
       .init("[label](https://example.com)", click: 2),
       .init("[label](https://example.com)", click: 7),
       .init("x <https://example.com>", click: 2),
       .init("x <https://example.com>", click: 22),
-      .init("see <mailto:a@example.com> now", click: 8),
       // コードの中の URL
       .init("see `https://example.com` now", click: 8),
       .init("```\nhttps://example.com\n```", click: 8),

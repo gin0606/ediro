@@ -31,6 +31,7 @@ jobs:
 
       - name: Show the toolchain
         run: |
+          sw_vers
           xcodebuild -version
           swift --version
 
@@ -49,6 +50,10 @@ jobs:
 
       - name: Test
         run: swift test
+
+      # エンジンは別のパッケージなので、ルートの swift test には入らない。
+      - name: Test the engine
+        run: swift test --package-path Packages/SwiftEditorEngine
 
       # 鍵は runner 限りの keychain に置く。後始末は runner の破棄に任せる。
       - name: Import the signing certificate

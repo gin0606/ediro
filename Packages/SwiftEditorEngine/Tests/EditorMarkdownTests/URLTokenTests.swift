@@ -13,7 +13,9 @@ import Foundation
     @Test func urlsInTextAndInsideConstructs() throws {
         #expect(try urls("見て https://example.com/a と http://example.org/b") == ["https://example.com/a", "http://example.org/b"])
         #expect(try urls("# 見出し https://example.com/a") == ["https://example.com/a"])
+        #expect(try urls("## https://example.com/a") == ["https://example.com/a"])
         #expect(try urls("> 引用 http://example.com/a") == ["http://example.com/a"])
+        #expect(try urls("> https://example.com/a") == ["https://example.com/a"])
         #expect(try urls("- https://example.com/a") == ["https://example.com/a"])
         #expect(try urls("1. http://example.com/a") == ["http://example.com/a"])
         #expect(try urls("*https://example.com/a*") == ["https://example.com/a"])

@@ -56,8 +56,10 @@ build:
 dist-path:
 	@echo $(DIST)
 
+## エンジンは別のパッケージなので、ルートの swift test には入らない。
 test:
 	swift test
+	swift test --package-path Packages/SwiftEditorEngine
 
 ## アイコンは図柄をコードで持ち、ここで各サイズへ展開する。
 ## 開発用は色を変えて、Dock や撮影結果で取り違えないようにする。
