@@ -35,10 +35,12 @@ extension AppKitTests {
 
     /// 参照 NSTextView の `type(_:)` と同じく、一文字ずつ打鍵の経路で入れ、打鍵ごとにメイン
     /// アクターを明け渡す。自動置換はその間にメインキューで行われる。
-    private func type(_ text: String, into view: EditorView) async {
+    private func type(
+      _ text: String, into view: EditorView, interval: Duration = .milliseconds(20)
+    ) async {
       for character in text {
         view.insertText(String(character), replacementRange: NSRange(location: NSNotFound, length: 0))
-        try? await Task.sleep(for: .milliseconds(20))
+        try? await Task.sleep(for: interval)
       }
     }
 
@@ -497,7 +499,10 @@ extension AppKitTests {
       view.isAutomaticQuoteSubstitutionEnabled = true
       view.isAutomaticDashSubstitutionEnabled = true
       view.select([caret(3), caret(7)], primary: 0)
-      await type(" \"a--b\" ", into: view)
+      // 打鍵の間が 300ms ほど空くと、NSTextView も打鍵ごとに置き換えて取り消しの単位が分かれる。
+      // 20ms 間隔だと、起動直後の初回だけ途中の置き換えが別の単位になることがある。その間で、
+      // 遅れても 300ms に届きにくい間隔で打つ。
+      await type(" \"a--b\" ", into: view, interval: .milliseconds(100))
       let expected = "one \(open)a—b\(close) \ntwo \(open)a—b\(close) "
       #expect(await waitUntil({ view.text == expected }, timeout: .seconds(2)))
       #expect(view.session.selections.map { view.nsRange(of: $0.range) } == [caret(10), caret(21)])
