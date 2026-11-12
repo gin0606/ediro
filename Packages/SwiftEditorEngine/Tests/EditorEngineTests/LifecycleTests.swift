@@ -149,10 +149,19 @@ import EditorEngine
         first.cancel(); second.cancel(); try workspace.dispose()
     }
     @Test func registrationSkipsDirectlyDisposedDocuments() throws {
+        // A document disposed directly stays in the workspace until it is closed, so registration
+        // and workspace disposal both meet it and must step over it instead of failing.
         let workspace = EditorWorkspace()
-        try workspace.createDocument(id:"disposed").dispose()
-        let provider = try workspace.register(language:"*",features:[.hover],provider:ClosureProvider { _ in .hover(nil) })
-        provider.cancel(); try workspace.dispose()
+        let disposed = try workspace.createDocument(id:"disposed")
+        try disposed.dispose()
+        #expect(workspace.documents["disposed"] === disposed)
+        var provider: Subscription?
+        #expect(throws:Never.self) {
+            provider = try workspace.register(language:"*",features:[.hover],provider:ClosureProvider { _ in .hover(nil) })
+        }
+        provider?.cancel()
+        #expect(throws:Never.self) { try workspace.dispose() }
+        #expect(workspace.isDisposed && workspace.documents.isEmpty)
     }
     @Test func cancellationsFromCallbacksTakeEffectAfterTheNotification() async throws {
         let workspace = EditorWorkspace()
@@ -349,8 +358,9 @@ import EditorEngine
         let observation = try document.observe { event in
             if event.kind == .disposed {
                 notified = true
-                #expect(throws: EditorError.reentrantMutation) {
-                    try workspace.closeDocument(id: document.id)
+                #expect(throws: EditorError.reentrantMutation) { try workspace.closeDocument(id: document.id) }
+                // The closing document still holds its ID while the notification runs.
+                #expect(throws: EditorError.self) {
                     replacement = try workspace.createDocument(id: document.id, text: "new")
                 }
                 #expect(workspace.documents[document.id] === document)

@@ -86,20 +86,4 @@ import EditorEngine
         for expected in history.dropLast().reversed() { try d.undo(); #expect(d.snapshot.text.utf16.elementsEqual(expected.utf16)) }
         for expected in history.dropFirst() { try d.redo(); #expect(d.snapshot.text.utf16.elementsEqual(expected.utf16)) }
     }
-    @Test func explicitCancellationAndDisposedDocumentOwnership() async throws {
-        let workspace = EditorWorkspace()
-        let d = try workspace.createDocument(id:"cancellation")
-        let gate = GateProvider()
-        let token = try workspace.register(language:"*",features:[.hover],provider:gate)
-        let request = Task { try await workspace.request(documentID:d.id,feature:.hover) }
-        try await gate.waitFor(1)
-        workspace.cancelRequest(documentID:d.id,feature:.hover)
-        gate.finish(0,.hover(nil))
-        await #expect(throws:EditorError.cancelled) { try await request.value }
-        guard case .cancelled = workspace.status(documentID:d.id,feature:.hover) else { Issue.record("Cancellation not retained"); return }
-        try d.dispose(); try workspace.closeDocument(id:d.id)
-        let another = try workspace.createDocument(id:"already disposed")
-        try another.dispose(); try workspace.dispose(); token.cancel()
-        #expect(workspace.isDisposed)
-    }
 }

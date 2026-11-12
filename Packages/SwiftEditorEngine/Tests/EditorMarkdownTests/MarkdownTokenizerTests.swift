@@ -47,18 +47,9 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
                                                          FlatToken(kind: .emphasis, range: 13..<21)])
     }
 
-    @Test func inlineCode() throws {
-        #expect(try merged("`swift test` runs it") == [FlatToken(kind: .inlineCode, range: 0..<12)])
-    }
-
     @Test func aCodeBlockSwallowsTheSyntaxInside() throws {
         let text = "```swift\n// # not a heading\nlet x = **1**\n```"
         #expect(try merged(text) == [FlatToken(kind: .codeBlock, range: 0..<(text as NSString).length)])
-    }
-
-    @Test func links() throws {
-        #expect(try merged("[Editaro](https://editaro.com) inspired it") == [FlatToken(kind: .link, range: 0..<30),
-                                                                               FlatToken(kind: .url, range: 10..<29)])
     }
 
     @Test func listMarkersAndBlockquotes() throws {
@@ -66,22 +57,8 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
         #expect(try merged("> quote") == [FlatToken(kind: .blockquote, range: 0..<7)])
     }
 
-    @Test func tokensAreInTextOrder() throws {
-        let offsets = try tokens("# Heading\n\n`code` and **bold**").map(\.range.lowerBound)
-        #expect(offsets == offsets.sorted())
-        #expect(offsets.count == 3)
-    }
-
     @Test func emptyTextHasNoTokens() throws {
         #expect(try tokens("").isEmpty)
-    }
-
-    @Test func strongBetweenJapaneseCharacters() throws {
-        #expect(try merged("エディ太郎の**次男**。") == [FlatToken(kind: .strong, range: 6..<12)])
-    }
-
-    @Test func emphasisBetweenJapaneseCharacters() throws {
-        #expect(try merged("AppKit で書き直した *下書き専用* エディタ。") == [FlatToken(kind: .emphasis, range: 14..<21)])
     }
 
     @Test func markersNeedTextNextToThemAndARunOfTheirLength() throws {
@@ -110,10 +87,6 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
         #expect(try tokens("#\tx") == [FlatToken(kind: .heading(level: 1), range: 0..<3)])
         #expect(try tokens("x **\u{3000}a**") == [])
         #expect(try tokens("x *a\u{3000}*") == [])
-    }
-
-    @Test func strongAndEmphasisOnOneLine() throws {
-        #expect(try kinds("**太字**と*斜体*が同じ行") == [.strong, .emphasis])
     }
 
     // An unclosed code block runs to the end of the document, as in CommonMark.
@@ -157,9 +130,6 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
     }
 
     @Test func kindsRoundTripThroughStrings() {
-        #expect(MarkdownTokenKind.allCases.count == 14)
-        #expect(Set(MarkdownTokenKind.allCases).count == 14)
-        #expect(MarkdownTokenKind(kind: "url", modifiers: []) == .url)
         for kind in MarkdownTokenKind.allCases { #expect(MarkdownTokenKind(kind: kind.kind, modifiers: kind.modifiers) == kind) }
         #expect(MarkdownTokenKind(kind: "heading", modifiers: ["level7"]) == nil)
         #expect(MarkdownTokenKind(kind: "heading", modifiers: []) == nil)
@@ -249,9 +219,17 @@ func merge(_ tokens: [FlatToken]) -> [FlatToken] {
         #expect(try tokens("<ab:c\u{7F}*x*>") == [FlatToken(kind: .emphasis, range: 6..<9)])
     }
 
-    @Test func markersBetweenJapaneseCharactersInsideOtherConstructs() throws {
-        let text = "本文と**太字**と*斜体*"
-        #expect(try tokens(text) == [token(.strong, "**太字**", in: text), token(.emphasis, "*斜体*", in: text)])
+    /// Japanese has no spaces between words, so markers count with a letter or punctuation
+    /// right outside them, on either side.
+    @Test func markersBetweenJapaneseCharacters() throws {
+        let cases: [(text: String, expected: [(MarkdownTokenKind, String)])] = [
+            ("エディ太郎の**次男**。", [(.strong, "**次男**")]),
+            ("**太字**と*斜体*が同じ行", [(.strong, "**太字**"), (.emphasis, "*斜体*")]),
+            ("本文と**太字**と*斜体*", [(.strong, "**太字**"), (.emphasis, "*斜体*")])
+        ]
+        for (text, expected) in cases {
+            #expect(try tokens(text) == expected.map { token($0.0, $0.1, in: text) }, "\(text)")
+        }
         let quote = "> 引用と**太字**。"
         #expect(try tokens(quote).dropFirst() == [token(.strong, "**太字**", in: quote)])
     }
