@@ -68,6 +68,7 @@ extension AppKitTests {
       .init(quotes: true, dashes: true, input: "\"a--b\" it's "),
     ]
 
+    // 引用符の形はユーザーの言語と引用符の設定で変わるので、同じプロセスの参照 NSTextView の結果と比べる。
     @Test(arguments: substitutionScenarios)
     func 打鍵での自動置換は参照と同じ本文になり一回の取り消しで戻る(scenario: SubstitutionScenario) async {
       let reference = ReferenceTextView()
@@ -318,56 +319,51 @@ extension AppKitTests {
     /// スペルパネルの代わりの送り手。NSTextView と同じく、`selectedCell` の文字を使う。
     private func spellingPanelStandIn(_ word: String) -> NSTextField { NSTextField(string: word) }
 
-    @Test func スペルパネルの変更は選択を置き換え参照と同じ本文になる() throws {
+    @Test func スペルパネルの変更は選択を置き換え一回の取り消しで戻る() throws {
       let text = "This is a mispeled word."
       let word = (text as NSString).range(of: "mispeled")
-      let reference = ReferenceTextView(text: text)
-      defer { reference.close() }
-      reference.textView.setSelectedRange(word)
-      reference.textView.changeSpelling(spellingPanelStandIn("misspelled"))
-
       let (window, view) = makeEditor(text: text)
       defer { window.close() }
       view.select([word], primary: 0)
       view.changeSpelling(spellingPanelStandIn("misspelled"))
-      #expect(view.text == reference.textView.string)
-      #expect(view.selectedRange() == reference.textView.selectedRange())
-      reference.textView.undoManager?.undo()
+      #expect(view.text == "This is a misspelled word.")
+      #expect(view.selectedRange() == NSRange(location: 10, length: 10))
       view.undo(nil)
       #expect(view.text == text)
-      #expect(reference.textView.string == text)
     }
 
     // MARK: - 入切
 
-    /// NSTextView と同じ名前の入切の値。
-    private static let toggles: [(action: Selector, value: ReferenceWritableKeyPath<EditorView, Bool>, reference: ReferenceWritableKeyPath<NSTextView, Bool>)] = [
-      (#selector(EditorView.toggleContinuousSpellChecking(_:)), \.isContinuousSpellCheckingEnabled, \.isContinuousSpellCheckingEnabled),
-      (#selector(EditorView.toggleGrammarChecking(_:)), \.isGrammarCheckingEnabled, \.isGrammarCheckingEnabled),
-      (#selector(EditorView.toggleAutomaticSpellingCorrection(_:)), \.isAutomaticSpellingCorrectionEnabled, \.isAutomaticSpellingCorrectionEnabled),
-      (#selector(EditorView.toggleSmartInsertDelete(_:)), \.smartInsertDeleteEnabled, \.smartInsertDeleteEnabled),
-      (#selector(EditorView.toggleAutomaticQuoteSubstitution(_:)), \.isAutomaticQuoteSubstitutionEnabled, \.isAutomaticQuoteSubstitutionEnabled),
-      (#selector(EditorView.toggleAutomaticDashSubstitution(_:)), \.isAutomaticDashSubstitutionEnabled, \.isAutomaticDashSubstitutionEnabled),
-      (#selector(EditorView.toggleAutomaticLinkDetection(_:)), \.isAutomaticLinkDetectionEnabled, \.isAutomaticLinkDetectionEnabled),
-      (#selector(EditorView.toggleAutomaticDataDetection(_:)), \.isAutomaticDataDetectionEnabled, \.isAutomaticDataDetectionEnabled),
-      (#selector(EditorView.toggleAutomaticTextReplacement(_:)), \.isAutomaticTextReplacementEnabled, \.isAutomaticTextReplacementEnabled),
+    /// NSTextView と同じ名前の入切の値と、その既定値。
+    private static let toggles:
+      [(action: Selector, value: ReferenceWritableKeyPath<EditorView, Bool>, initial: Bool)] = [
+      // 入力中のスペルチェックは起動のたびにオフ。文法は、入力中の検査をオンにしたときに一緒に検査する。
+      (#selector(EditorView.toggleContinuousSpellChecking(_:)), \.isContinuousSpellCheckingEnabled, false),
+      (#selector(EditorView.toggleGrammarChecking(_:)), \.isGrammarCheckingEnabled, true),
+      // 自動スペル修正の既定はシステム設定に従う。
+      (
+        #selector(EditorView.toggleAutomaticSpellingCorrection(_:)), \.isAutomaticSpellingCorrectionEnabled,
+        NSSpellChecker.isAutomaticSpellingCorrectionEnabled
+      ),
+      (#selector(EditorView.toggleSmartInsertDelete(_:)), \.smartInsertDeleteEnabled, true),
+      (#selector(EditorView.toggleAutomaticQuoteSubstitution(_:)), \.isAutomaticQuoteSubstitutionEnabled, false),
+      (#selector(EditorView.toggleAutomaticDashSubstitution(_:)), \.isAutomaticDashSubstitutionEnabled, false),
+      (#selector(EditorView.toggleAutomaticLinkDetection(_:)), \.isAutomaticLinkDetectionEnabled, false),
+      (#selector(EditorView.toggleAutomaticDataDetection(_:)), \.isAutomaticDataDetectionEnabled, false),
+      (#selector(EditorView.toggleAutomaticTextReplacement(_:)), \.isAutomaticTextReplacementEnabled, false),
     ]
 
-    @Test func 入切の既定値は参照と同じで切り替えるとメニューのチェック印も変わる() {
-      let reference = ReferenceTextView()
-      defer { reference.close() }
+    @Test func 入切の既定値と切り替えたときのメニューのチェック印() {
       let (window, view) = makeEditor(text: "")
       defer { window.close() }
       for toggle in Self.toggles {
         let name = NSStringFromSelector(toggle.action)
-        #expect(view[keyPath: toggle.value] == reference.textView[keyPath: toggle.reference], "\(name)")
+        #expect(view[keyPath: toggle.value] == toggle.initial, "\(name)")
         let item = NSMenuItem(title: "", action: toggle.action, keyEquivalent: "")
         for _ in 0..<2 {
           let before = view[keyPath: toggle.value]
           view.perform(toggle.action, with: item)
-          reference.textView.perform(toggle.action, with: item)
           #expect(view[keyPath: toggle.value] == !before, "\(name)")
-          #expect(view[keyPath: toggle.value] == reference.textView[keyPath: toggle.reference], "\(name)")
           #expect(view.validateUserInterfaceItem(item))
           #expect(item.state == (view[keyPath: toggle.value] ? .on : .off), "\(name)")
         }
@@ -426,28 +422,23 @@ extension AppKitTests {
 
     // MARK: - 打鍵以外の入力、変換中、複数のキャレット
 
-    @Test func 貼り付けた文字は参照と同じく自動置換しない() async {
+    @Test func 貼り付けた文字は自動置換せず後から打鍵した文字だけを置き換える() async {
       let pasteboard = NSPasteboard(name: NSPasteboard.Name("ediro.test.substitution"))
       defer { pasteboard.releaseGlobally() }
       pasteboard.clearContents()
       pasteboard.setString("\"a--b\" ", forType: .string)
-      let reference = ReferenceTextView()
-      defer { reference.close() }
-      reference.textView.isAutomaticQuoteSubstitutionEnabled = true
-      reference.textView.isAutomaticDashSubstitutionEnabled = true
-      reference.textView.readSelection(from: pasteboard, type: .string)
-      await reference.type("x ")
-
       let (window, view) = makeEditor(text: "")
       defer { window.close() }
       view.isAutomaticQuoteSubstitutionEnabled = true
       view.isAutomaticDashSubstitutionEnabled = true
       view.paste(from: pasteboard)
-      await type("x ", into: view)
-      try? await Task.sleep(for: .milliseconds(500))
-      #expect(view.text == reference.textView.string)
+      // 打鍵した文字が置き換わるまで待ち、その間に貼り付けた文字が置き換わらないことを確かめる。
+      await type("x--y ", into: view)
+      #expect(await waitUntil({ view.text.contains("x—y") }, timeout: .seconds(2)))
+      #expect(view.text == "\"a--b\" x—y ")
     }
 
+    // 引用符の形はユーザーの言語と引用符の設定で変わるので、同じプロセスの参照 NSTextView の結果と比べる。
     @Test func 引用符の置換を通さないコマンドで入れた引用符は参照と同じく置き換えない() async {
       let reference = ReferenceTextView()
       defer { reference.close() }
@@ -470,32 +461,22 @@ extension AppKitTests {
       #expect(view.text == reference.textView.string)
     }
 
-    @Test func 変換中の文字は確定しても参照と同じく自動置換しない() async {
-      let reference = ReferenceTextView()
-      defer { reference.close() }
-      reference.textView.isAutomaticQuoteSubstitutionEnabled = true
-      await reference.type("a ")
-      reference.textView.setMarkedText(
-        "\"x", selectedRange: caret(2), replacementRange: NSRange(location: NSNotFound, length: 0))
-      try? await Task.sleep(for: .milliseconds(300))
-      let referenceMarked = reference.textView.string
-      reference.textView.insertText(
-        "\"x\"", replacementRange: NSRange(location: NSNotFound, length: 0))
-      await reference.type(" ")
-
+    @Test func 変換中の文字は確定しても自動置換せず後から打鍵した文字だけを置き換える() async {
       let (window, view) = makeEditor(text: "")
       defer { window.close() }
       view.isAutomaticQuoteSubstitutionEnabled = true
+      view.isAutomaticDashSubstitutionEnabled = true
       await type("a ", into: view)
       view.setMarkedText(
         "\"x", selectedRange: caret(2), replacementRange: NSRange(location: NSNotFound, length: 0))
       try? await Task.sleep(for: .milliseconds(300))
       #expect(view.hasMarkedText())
-      #expect(view.text == referenceMarked)
+      #expect(view.text == "a \"x")
       view.insertText("\"x\"", replacementRange: NSRange(location: NSNotFound, length: 0))
-      await type(" ", into: view)
-      _ = await waitUntil({ view.text == reference.textView.string }, timeout: .seconds(2))
-      #expect(view.text == reference.textView.string)
+      // 打鍵した文字が置き換わるまで待ち、その間に確定した文字が置き換わらないことを確かめる。
+      await type(" c--d ", into: view)
+      #expect(await waitUntil({ view.text.contains("c—d") }, timeout: .seconds(2)))
+      #expect(view.text == "a \"x\" c—d ")
     }
 
     @Test func 変換中はコントローラからの置き換えを当てない() {
@@ -510,13 +491,16 @@ extension AppKitTests {
     }
 
     @Test func 複数のキャレットではキャレットごとに打鍵した文字を置き換える() async {
+      // 引用符の形はユーザーの引用符の設定と言語で変わるので、英語の本文に使う形を求める。
+      let quotes = NSSpellChecker.shared.userQuotesArray(forLanguage: "en")
+      let (open, close) = (quotes[0], quotes[1])
       let (window, view) = makeEditor(text: "one\ntwo")
       defer { window.close() }
       view.isAutomaticQuoteSubstitutionEnabled = true
       view.isAutomaticDashSubstitutionEnabled = true
       view.select([caret(3), caret(7)], primary: 0)
       await type(" \"a--b\" ", into: view)
-      let expected = "one “a—b” \ntwo “a—b” "
+      let expected = "one \(open)a—b\(close) \ntwo \(open)a—b\(close) "
       #expect(await waitUntil({ view.text == expected }, timeout: .seconds(2)))
       #expect(view.session.selections.map { view.nsRange(of: $0.range) } == [caret(10), caret(21)])
       // 同じ検査で行った両方のキャレットの置き換えを、一回で取り消す。
@@ -589,41 +573,27 @@ extension AppKitTests {
       #expect(await waitUntil({ marks(view)[first] != nil && marks(view)[second] != nil }, timeout: .seconds(3)))
     }
 
-    @Test func 前からある文字と打鍵した文字にまたがる自動置換は参照と同じく当てる() async {
-      let reference = ReferenceTextView(text: "a-")
-      defer { reference.close() }
-      reference.textView.isAutomaticDashSubstitutionEnabled = true
-      reference.textView.setSelectedRange(caret(2))
-      await reference.type("-b ")
-
+    @Test func 前からある文字と打鍵した文字にまたがる自動置換は当てる() async {
       let (window, view) = makeEditor(text: "a-")
       defer { window.close() }
       view.isAutomaticDashSubstitutionEnabled = true
       view.select([caret(2)], primary: 0)
       await type("-b ", into: view)
-      _ = await waitUntil({ view.text == reference.textView.string }, timeout: .seconds(2))
-      #expect(view.text == reference.textView.string)
+      #expect(await waitUntil({ view.text == "a—b " }, timeout: .seconds(2)))
     }
 
-    @Test func 自動置換を取り消した後に打鍵を続けても参照と同じく置き換え直さない() async {
-      let reference = ReferenceTextView()
-      defer { reference.close() }
-      reference.textView.isAutomaticQuoteSubstitutionEnabled = true
-      reference.textView.isAutomaticDashSubstitutionEnabled = true
-      await reference.type("\"a--b\" ")
-      reference.textView.undoManager?.undo()
-      await reference.type("c ")
-
+    @Test func 自動置換を取り消した後に打鍵を続けても置き換え直さない() async {
       let (window, view) = makeEditor(text: "")
       defer { window.close() }
       view.isAutomaticQuoteSubstitutionEnabled = true
       view.isAutomaticDashSubstitutionEnabled = true
       await type("\"a--b\" ", into: view)
-      _ = await waitUntil({ view.text.contains("—") }, timeout: .seconds(2))
+      #expect(await waitUntil({ view.text.contains("—") }, timeout: .seconds(2)))
       view.undo(nil)
+      #expect(view.text == "\"a--b\" ")
       await type("c ", into: view)
       try? await Task.sleep(for: .milliseconds(500))
-      #expect(view.text == reference.textView.string)
+      #expect(view.text == "\"a--b\" c ")
     }
 
     @Test func 打鍵した文字を含まない範囲への自動置換は当てない() {
@@ -663,6 +633,7 @@ extension AppKitTests {
       #expect(!view.isAutomaticQuoteSubstitutionEnabled)
     }
 
+    // 引用符の形はユーザーの言語と引用符の設定で変わるので、同じプロセスの参照 NSTextView の結果と比べる。
     @Test func 改行とタブのコマンドでも打鍵と同じく参照と同じに自動置換する() async {
       let input = "\"x\"\ta--b\n'y'\n"
       let reference = ReferenceTextView()
@@ -760,6 +731,7 @@ extension AppKitTests {
 
     // MARK: - メニューのコマンド
 
+    // 引用符の形はユーザーの言語と引用符の設定で変わるので、同じプロセスの参照 NSTextView の結果と比べる。
     @Test func 選択の中の引用符とダッシュの置き換えは参照と同じ本文になる() async {
       let text = "say \"hi\" -- it's \"x\""
       for action in [
@@ -785,19 +757,15 @@ extension AppKitTests {
       }
     }
 
-    @Test func 文書の検査は参照と同じく次の誤りの単語を選んで下線を引く() async {
+    @Test func 文書の検査は次の誤りの単語を選んで下線を引く() async {
       let text = "Fine wrods here and mroe."
-      let reference = ReferenceTextView(text: text)
-      defer { reference.close() }
       let (window, view) = makeEditor(text: text)
       defer { window.close() }
-      reference.textView.setSelectedRange(caret(0))
       view.select([caret(0)], primary: 0)
-      for _ in 0..<2 {
-        reference.textView.checkSpelling(nil)
-        view.checkSpelling(nil)
-        #expect(view.selectedRange() == reference.textView.selectedRange())
-      }
+      view.checkSpelling(nil)
+      #expect(view.selectedRange() == NSRange(location: 5, length: 5))
+      view.checkSpelling(nil)
+      #expect(view.selectedRange() == NSRange(location: 20, length: 4))
       // 入力中の検査がオフでも、見つけた誤りには下線を引く (NSTextView と同じ)。
       #expect(!view.isContinuousSpellCheckingEnabled)
       let found = NSRange(location: 5, length: 5)

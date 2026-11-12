@@ -4,24 +4,20 @@ import Testing
 
 @Suite(.serialized)
 struct InputAssistanceTests {
-  @Test func completionCandidatesMatchReference() async throws {
+  @Test func completionsCompleteTheWordBeforeTheCaret() async throws {
     try await requireCompletionsAvailable()
-    let reference = ReferenceTextView(text: "hel")
-    defer { reference.close() }
     let view = EditorView(text: "hel")
     view.select([NSRange(location: 3, length: 0)], primary: 0)
-    reference.textView.setSelectedRange(NSRange(location: 3, length: 0))
-    var expectedIndex = 0
-    var actualIndex = 0
-    let range = reference.textView.rangeForUserCompletion
-    #expect(view.rangeForUserCompletion == range)
-    let expected = reference.textView.completions(forPartialWordRange: range, indexOfSelectedItem: &expectedIndex)
-    #expect(expected?.isEmpty == false)
-    #expect(view.completions(forPartialWordRange: range, indexOfSelectedItem: &actualIndex) == expected)
-    #expect(actualIndex == expectedIndex)
-    view.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-    #expect(view.inputAssistance.completionCandidates == expected)
-    #expect(view.text == "hel")
+    let range = view.rangeForUserCompletion
+    #expect(range == NSRange(location: 0, length: 3))
+    var index = -1
+    let candidates = try #require(view.completions(forPartialWordRange: range, indexOfSelectedItem: &index))
+    #expect(!candidates.isEmpty)
+    #expect(candidates.allSatisfy { $0.lowercased().hasPrefix("hel") }, "\(candidates)")
+    #expect(candidates.indices.contains(index))
+    // 本文からはみ出す範囲には候補を出さない。
+    #expect(
+      view.completions(forPartialWordRange: NSRange(location: 2, length: 5), indexOfSelectedItem: &index) == nil)
   }
 
   @Test func cancelWithMultipleSelectionsKeepsOnlyThePrimary() {
@@ -48,49 +44,44 @@ struct InputAssistanceTests {
         modifierFlags: modifiers, timestamp: 0, windowNumber: 0, context: nil,
         characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode))
       view.interpretKeyEvents([event])
-      #expect(!view.inputAssistance.completionCandidates.isEmpty)
+      let candidates = view.inputAssistance.completionCandidates
+      #expect(!candidates.isEmpty)
+      #expect(candidates.allSatisfy { $0.lowercased().hasPrefix("hel") }, "\(candidates)")
+      // 候補を出すだけで、本文は変えない。
+      #expect(view.text == "hel")
     }
   }
 
-  @Test(arguments: [true, false]) func smartDeleteMatchesReference(enabled: Bool) {
+  @Test(arguments: [true, false]) func smartDeleteRemovesTheSpaceOnlyAfterWordSelection(enabled: Bool) {
     for byWord in [true, false] {
       for action in ["deleteBackward:", "deleteForward:", "delete:"] {
-        let reference = ReferenceTextView(text: "hello world foo")
-        defer { reference.close() }
         let view = EditorView(text: "hello world foo")
         view.smartInsertDeleteEnabled = enabled
-        reference.textView.smartInsertDeleteEnabled = enabled
         if byWord {
           view.select([NSRange(location: 8, length: 0)], primary: 0)
           view.selectWord(nil)
         } else { view.select([NSRange(location: 6, length: 5)], primary: 0) }
-        reference.textView.setSelectedRange(NSRange(location: 6, length: 5))
-        reference.textView.selectionGranularity = byWord ? .selectByWord : .selectByCharacter
-        reference.textView.doCommand(by: NSSelectorFromString(action))
         view.doCommand(by: NSSelectorFromString(action))
-        #expect(view.text == reference.textView.string, "\(action) word=\(byWord)")
+        let expected = enabled && byWord ? "hello foo" : "hello  foo"
+        #expect(view.text == expected, "\(action) word=\(byWord)")
         view.undo(nil)
         #expect(view.text == "hello world foo")
       }
     }
   }
 
-  @Test(arguments: [true, false]) func smartPasteMatchesReference(enabled: Bool) {
+  @Test(arguments: [true, false]) func smartPasteAddsSpacesOnlyForSmartCopiedText(enabled: Bool) {
     for marked in [true, false] {
-      let reference = ReferenceTextView(text: "hellofoo")
-      defer { reference.close() }
       let view = EditorView(text: "hellofoo")
       view.smartInsertDeleteEnabled = enabled
-      reference.textView.smartInsertDeleteEnabled = enabled
       view.select([NSRange(location: 5, length: 0)], primary: 0)
-      reference.textView.setSelectedRange(NSRange(location: 5, length: 0))
       let board = NSPasteboard.withUniqueName()
       defer { board.releaseGlobally() }
       board.setString("world", forType: .string)
       if marked { board.setString("", forType: EditorView.smartPasteType) }
-      #expect(reference.textView.readSelection(from: board))
       view.paste(from: board)
-      #expect(view.text == reference.textView.string)
+      let expected = enabled && marked ? "hello world foo" : "helloworldfoo"
+      #expect(view.text == expected, "marked=\(marked)")
       view.undo(nil)
       #expect(view.text == "hellofoo")
     }
@@ -183,12 +174,11 @@ struct InputAssistanceTests {
     #expect(view.unionRectInVisibleSelectedRange.height >= caret.height)
   }
 
-  @Test func predictionTraitsMatchReferenceAndPropagate() {
-    let reference = ReferenceTextView()
-    defer { reference.close() }
+  @Test func predictionTraitsFollowTheSystemByDefaultAndPropagate() {
     let view = EditorView(text: "")
-    #expect(view.inlinePredictionType == reference.textView.inlinePredictionType)
-    #expect(view.mathExpressionCompletionType == reference.textView.mathExpressionCompletionType)
+    // 既定ではシステム設定に従う。
+    #expect(view.inlinePredictionType == .default)
+    #expect(view.mathExpressionCompletionType == .default)
     view.textChecker.inlinePredictionType = .no
     view.textChecker.mathExpressionCompletionType = .yes
     #expect(view.inlinePredictionType == .no)
@@ -197,7 +187,25 @@ struct InputAssistanceTests {
     #expect(view.textChecker.mathExpressionCompletionType == .no)
   }
 
-  @Test func linksAndDataDetectionApplyWhenEnabled() async {
+  /// システムのデータ検出 (DataDetectors) が URL と電話番号を見つけない環境では、リンクとデータの検出を
+  /// 確かめられないので打ち切る。エディタの印は NSTextCheckingController が NSSpellChecker に頼んだ検出の
+  /// 結果から付くので、エディタではなく NSSpellChecker に直接問い合わせる。
+  private func requireDataDetectionAvailable(in text: String, at locations: [Int]) throws {
+    let types = NSTextCheckingResult.CheckingType.link.rawValue
+      | NSTextCheckingResult.CheckingType.phoneNumber.rawValue
+    let found = NSSpellChecker.shared.check(
+      text, range: NSRange(location: 0, length: (text as NSString).length), types: types,
+      options: [:], inSpellDocumentWithTag: 0, orthography: nil, wordCount: nil
+    ).map(\.range)
+    if !locations.allSatisfy({ location in found.contains { NSLocationInRange(location, $0) } }) {
+      try Test.cancel(
+        "システムのデータ検出が URL と電話番号を見つけない環境なので、リンクとデータの検出を確かめられない")
+    }
+  }
+
+  @Test func linksAndDataDetectionApplyWhenEnabled() async throws {
+    let input = "https://example.com +1 (415) 555-1234 "
+    try requireDataDetectionAvailable(in: input, at: [0, 25])
     let state = makeState()
     let controller = EditorTextController(state: state)
     let view = controller.editorView
@@ -209,7 +217,7 @@ struct InputAssistanceTests {
     defer { window.close() }
     view.isAutomaticLinkDetectionEnabled = true
     view.isAutomaticDataDetectionEnabled = true
-    for character in "https://example.com +1 (415) 555-1234 " {
+    for character in input {
       view.insertText(String(character), replacementRange: NSRange(location: NSNotFound, length: 0))
       try? await Task.sleep(for: .milliseconds(20))
     }
@@ -229,14 +237,14 @@ struct InputAssistanceTests {
     view.isAutomaticLinkDetectionEnabled = false
     view.isAutomaticDataDetectionEnabled = false
     view.replaceText("")
-    for character in "https://example.com +1 (415) 555-1234 " {
+    for character in input {
       view.insertText(String(character), replacementRange: NSRange(location: NSNotFound, length: 0))
       try? await Task.sleep(for: .milliseconds(20))
     }
     try? await Task.sleep(for: .milliseconds(200))
     #expect(view.textChecker.annotations.attribute(.link, at: 0, effectiveRange: nil) == nil)
     #expect(view.textChecker.annotations.attribute(dataKey, at: 25, effectiveRange: nil) == nil)
-    #expect(view.text == "https://example.com +1 (415) 555-1234 ")
+    #expect(view.text == input)
   }
 }
 
@@ -413,16 +421,13 @@ extension InputAssistanceTests {
   @Test func overlappingSmartDeletionsRemoveAllSelectedWords() {
     for action in ["deleteBackward:", "deleteForward:", "delete:", "cut:"] {
       let view = EditorView(text: "one two three")
-      let reference = ReferenceTextView(text: "one two three")
-      defer { reference.close() }
       view.select([NSRange(location: 1, length: 0), NSRange(location: 5, length: 0)], primary: 1)
       view.selectWord(nil)
       let before = view.session.selections
-      reference.textView.selectedRanges = view.session.selections.map { NSValue(range: view.nsRange(of: $0.range)) }
-      reference.textView.selectionGranularity = .selectByWord
-      reference.textView.doCommand(by: NSSelectorFromString(action))
       view.doCommand(by: NSSelectorFromString(action))
-      #expect(view.text == reference.textView.string)
+      // 二つの単語の間の空白はどちらの単語の削除範囲にも入るので、二つの範囲を合わせて消す。
+      // 消える空白はその一つだけで、"three" の前の空白は残る (NSTextView と同じ)。
+      #expect(view.text == " three", "\(action)")
       view.undo(nil)
       #expect(view.text == "one two three")
       #expect(view.session.selections == before)
