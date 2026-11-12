@@ -79,25 +79,39 @@ func underlinedRanges(_ storage: NSAttributedString) -> [NSRange] {
   }
 }
 
-/// システムの文法チェッカーがテストで使う英語の文法の誤りを返さない環境 (CI の VM など) では、
-/// 文法の印を確かめられないので打ち切る。エディタと同じく言語を指定せずに問い合わせ、
-/// 準備が済むまでしばらく待つ。文法だけを求めると結果が返らないので、スペルと一緒に求める。
+/// システムの文法チェッカーが、テストで使う英語の文法の誤りを、テストが前提にする範囲 (動詞の
+/// "go" と "is" だけ) で返さない環境では、文法の印を確かめられないので打ち切る。結果を返さない
+/// 環境 (CI の VM など) のほか、OS の判定の粒度が変わったときも、Ediro の誤りとせずに打ち切る。
+/// エディタと同じく言語を指定せずに問い合わせ、準備が済むまでしばらく待つ。文法だけを求めると
+/// 結果が返らないので、スペルと一緒に求める。
 @MainActor func requireGrammarCheckingAvailable() async throws {
   if Environment.grammar == nil {
     let types =
       NSTextCheckingResult.CheckingType.spelling.rawValue
       | NSTextCheckingResult.CheckingType.grammar.rawValue
-    func flagged(_ text: String) -> Bool {
-      NSSpellChecker.shared.check(
+    /// `text` の文法の結果に、`issue` の文字だけを指す誤りがあるか。誤りの範囲は文の先頭から
+    /// 数え、無ければ文全体を指す。
+    func flags(_ issue: String, in text: String) -> Bool {
+      let target = (text as NSString).range(of: issue)
+      return NSSpellChecker.shared.check(
         text, range: NSRange(location: 0, length: (text as NSString).length), types: types,
         options: [:], inSpellDocumentWithTag: 0, orthography: nil, wordCount: nil
-      ).contains { $0.resultType == .grammar }
+      ).contains { result in
+        result.resultType == .grammar
+          && (result.grammarDetails ?? []).contains { detail in
+            guard let range = (detail[NSGrammarRange] as? NSValue)?.rangeValue else {
+              return result.range == target
+            }
+            return NSRange(location: result.range.location + range.location, length: range.length)
+              == target
+          }
+      }
     }
     Environment.grammar = await waitUntil({
-      flagged("He go to school yesterday. ") && flagged("They is happy. ")
+      flags("go", in: "He go to school yesterday. ") && flags("is", in: "They is happy. ")
     }, timeout: .seconds(3))
   }
   if Environment.grammar != true {
-    try Test.cancel("文法チェッカーが誤りを返さない環境なので、文法の印を確かめられない")
+    try Test.cancel("文法チェッカーが前提の範囲で誤りを返さない環境なので、文法の印を確かめられない")
   }
 }

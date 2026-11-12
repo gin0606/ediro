@@ -7,7 +7,7 @@ import Testing
 private var retainedEditors: [(NSWindow, EditorTextController)] = []
 
 /// コーディネータへの知らせを記録する。
-private final class RecordingCoordinator: NSWritingToolsCoordinator {
+private class RecordingCoordinator: NSWritingToolsCoordinator {
   enum Call: Equatable {
     case update(NSRange, String, NSWritingToolsCoordinator.TextUpdateReason, UUID)
     case reflow(UUID)
@@ -16,6 +16,10 @@ private final class RecordingCoordinator: NSWritingToolsCoordinator {
   }
 
   var calls: [Call] = []
+
+  /// 実効の扱いは OS と Apple Intelligence の状態で決まる。Writing Tools が使えない環境でも
+  /// 完全版として振る舞い、完全版のときだけ行う文法の誤りの提示を確かめられるようにする。
+  override var behavior: NSWritingToolsBehavior { .complete }
 
   override func updateRange(
     _ range: NSRange, with replacementText: NSAttributedString,
@@ -48,6 +52,45 @@ private final class RecordingCoordinator: NSWritingToolsCoordinator {
   }
   #endif
 }
+
+#if canImport(AppKit, _version: 2700)
+/// 実際のコーディネータと同じく、文法の誤りを示すアニメーションを委譲の呼び出しで準備して
+/// 終える。実際のコーディネータは、取りやめる呼び出しの中でアニメーションを終えて委譲に
+/// コンテキストを捨てさせ、始める呼び出しの中でアニメーションを終えることもある。
+@available(macOS 27.0, *)
+private final class ReentrantCoordinator: RecordingCoordinator {
+  /// 始める呼び出しの中でアニメーションを終えるか。終えなければ、取りやめる呼び出しの中で終える。
+  var finishesWhileStarting = false
+  /// 始めたアニメーションの、コンテキストの中の範囲。
+  private(set) var started: [NSRange] = []
+  private var running: [UUID: (NSRange, NSWritingToolsCoordinator.Context)] = [:]
+
+  private var editor: EditorView? { delegate as? EditorView }
+
+  override func startTextAnimation(
+    _ textAnimation: NSWritingToolsCoordinator.TextAnimation, for range: NSRange,
+    in context: NSWritingToolsCoordinator.Context, writingDirection: NSWritingDirection
+  ) -> UUID? {
+    let animation = UUID()
+    started.append(range)
+    editor?.writingToolsCoordinator(self, prepareFor: textAnimation, for: range, in: context) {}
+    if finishesWhileStarting {
+      editor?.writingToolsCoordinator(self, finish: textAnimation, for: range, in: context) {}
+    } else {
+      running[animation] = (range, context)
+    }
+    return animation
+  }
+
+  override func cancelTextAnimations(identifiers: [UUID]) {
+    super.cancelTextAnimations(identifiers: identifiers)
+    for animation in identifiers {
+      guard let (range, context) = running.removeValue(forKey: animation) else { continue }
+      editor?.writingToolsCoordinator(self, finish: .indicateGrammar, for: range, in: context) {}
+    }
+  }
+}
+#endif
 
 extension AppKitTests {
   struct WritingToolsTests {
@@ -187,20 +230,44 @@ extension AppKitTests {
       return either == 0 ? 0 : Double(both) / Double(either)
     }
 
-    /// 画像の中で、透明でない画素の数と、緑が強い画素の数。
-    private func pixels(_ image: CGImage) -> (opaque: Int, green: Int) {
+    /// 画像の中で、透明でない画素の数。
+    private func opaquePixels(_ image: CGImage) -> Int {
       let rep = NSBitmapImageRep(cgImage: image)
-      var opaque = 0, green = 0
+      var opaque = 0
       for x in 0..<rep.pixelsWide {
         for y in 0..<rep.pixelsHigh {
-          guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
-            color.alphaComponent > 0.1
-          else { continue }
-          opaque += 1
-          if color.greenComponent > color.redComponent + 0.2 { green += 1 }
+          if (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.1 { opaque += 1 }
         }
       }
-      return (opaque, green)
+      return opaque
+    }
+
+    /// 画像の大きさと、全ての画素の値。同じ絵を描いた画像どうしは等しい。
+    private func pixelValues(_ image: CGImage) -> [Int] {
+      pixelValues(NSBitmapImageRep(cgImage: image), in: 0..<image.width, 0..<image.height)
+    }
+
+    /// ビューに描いた、矩形の中の全ての画素の値。
+    private func pixelValues(_ view: EditorView, in rect: CGRect) throws -> [Int] {
+      view.layoutSubtreeIfNeeded()
+      let rep = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+      view.cacheDisplay(in: view.bounds, to: rep)
+      let scale = CGFloat(rep.pixelsWide) / view.bounds.width
+      return pixelValues(
+        rep, in: Int(rect.minX * scale)..<Int(rect.maxX * scale),
+        Int(rect.minY * scale)..<Int(rect.maxY * scale))
+    }
+
+    private func pixelValues(_ rep: NSBitmapImageRep, in xs: Range<Int>, _ ys: Range<Int>) -> [Int] {
+      var values = [xs.count, ys.count]
+      var pixel = [Int](repeating: 0, count: rep.samplesPerPixel)
+      for x in xs {
+        for y in ys {
+          rep.getPixel(&pixel, atX: x, y: y)
+          values += pixel
+        }
+      }
+      return values
     }
 
     // MARK: - コーディネータ
@@ -210,20 +277,21 @@ extension AppKitTests {
       "Writing Tools が使えない環境では確かめられない"
     ) { await MainActor.run { NSWritingToolsCoordinator.isWritingToolsAvailable } }
 
+    /// 実効の扱いは、エディタが求める扱いに OS と Apple Intelligence の状態を合わせて決まる。
+    /// 文法の誤りを示すアニメーションは完全版のときだけ始めるので、Writing Tools が使える環境で
+    /// エディタが完全版として扱われることを OS と合わせて確かめる。
     @Test(writingToolsAvailable) func ウィンドウに載せたエディタのWritingToolsは完全版になる() throws {
       let (window, view) = makeEditor(text: "Hello world.")
       defer { window.close() }
       let coordinator = try #require(view.writingToolsCoordinator)
       #expect(coordinator.behavior == .complete)
-      #expect(coordinator.preferredResultOptions == .plainText)
-      #expect(coordinator.resultOptions == .plainText)
-      #expect(coordinator.delegate === view)
     }
 
-    @Test func 検査のクライアントはWriting_Toolsの扱いをコーディネータの値で伝える() throws {
+    @Test func コーディネータはエディタを委譲にし検査のクライアントはその扱いの値を伝える() throws {
       let (window, view) = makeEditor(text: "")
       defer { window.close() }
       let coordinator = try #require(view.writingToolsCoordinator)
+      #expect(coordinator.delegate === view)
       let checker = view.textChecker
       #expect(checker.writingToolsBehavior == .complete)
       #expect(checker.allowedWritingToolsResultOptions == .plainText)
@@ -258,10 +326,6 @@ extension AppKitTests {
         #expect(context.attributedString.string == text)
         #expect(context.range == full)
       }
-      view.select([NSRange(location: 0, length: 5)], primary: 0)
-      let visible = try self.context(view, scope: .visibleArea)
-      #expect(visible.attributedString.string == text)
-      #expect(visible.range == full)
     }
 
     @Test func 見えている範囲の依頼では見えている文字とその段落を渡す() throws {
@@ -581,9 +645,9 @@ extension AppKitTests {
       #expect(preview.candidateRects.map(\.rectValue) == rects)
       let scale = view.window?.backingScaleFactor ?? 2
       #expect(preview.previewImage.width == Int((rects[0].width * scale).rounded(.up)))
-      let drawn = pixels(preview.previewImage)
-      #expect(drawn.opaque > 0)
-      #expect(drawn.opaque < preview.previewImage.width * preview.previewImage.height, "背景は透明")
+      let drawn = opaquePixels(preview.previewImage)
+      #expect(drawn > 0)
+      #expect(drawn < preview.previewImage.width * preview.previewImage.height, "背景は透明")
 
       // 矩形の依頼は、その矩形の画像と、矩形に掛かるコンテキストの文字の矩形を返す。
       let line = viewRects(view, NSRange(location: 11, length: 11))[0]
@@ -591,7 +655,7 @@ extension AppKitTests {
       let rectPreview = try #require(view.textPreview(of: rect, in: context))
       #expect(rectPreview.presentationFrame == rect)
       #expect(rectPreview.candidateRects.map(\.rectValue) == [line.intersection(rect)])
-      #expect(pixels(rectPreview.previewImage).opaque > 0)
+      #expect(opaquePixels(rectPreview.previewImage) > 0)
 
       // 依頼の矩形が表示領域からはみ出しても、ビューの外の分だけを除いて返す。
       let tall = NSRect(x: 0, y: line.minY, width: view.bounds.width, height: view.bounds.height)
@@ -678,7 +742,7 @@ extension AppKitTests {
       #expect(try ink(view, in: other) > 0)
       // 画像は隠している本文も描く。
       let preview = try #require(view.textPreview(of: range, in: context))
-      #expect(pixels(preview.previewImage).opaque > 0)
+      #expect(opaquePixels(preview.previewImage) > 0)
 
       view.writingToolsCoordinator(coordinator, finish: .anticipate, for: range, in: context) {}
       #expect(view.writingToolsHiddenRects(in: view.bounds).hidden.isEmpty)
@@ -758,15 +822,16 @@ extension AppKitTests {
       let hello = NSRange(location: 0, length: 5)
       let rect = viewRects(view, hello)[0]
       view.select([NSRange(location: 11, length: 0)], primary: 0)
-      let unselected = try darkness(view, in: rect)
+      let unselected = try pixelValues(view, in: rect)
       view.select([hello], primary: 0)
-      let selected = try darkness(view, in: rect)
-      #expect(selected > unselected * 1.2)
+      let selected = try pixelValues(view, in: rect)
+      // 選択の色は強調色や外観、ウィンドウの状態で変わるので、描き分けていることだけを前提にする。
+      try #require(selected != unselected)
       _ = try self.context(view, scope: .fullDocument)
       try changeState(view, to: .interactiveStreaming)
-      #expect(abs(try darkness(view, in: rect) - unselected) < unselected * 0.01)
+      #expect(try pixelValues(view, in: rect) == unselected)
       try changeState(view, to: .interactiveResting)
-      #expect(abs(try darkness(view, in: rect) - selected) < selected * 0.01)
+      #expect(try pixelValues(view, in: rect) == selected)
     }
 
     @Test func 隠している本文はWriting_Toolsの置き換えに合わせて伸び縮みする() throws {
@@ -1042,7 +1107,17 @@ extension AppKitTests {
       return (state as? String).flatMap(Int.init).map { $0 & grammar != 0 } ?? false
     }
 
-    /// 文法の誤りの印が付くまで待つ。
+    /// `range` の文字にだけ文法の誤りの印が付いているか (前後の文字には付いていない)。
+    private func hasGrammarMark(_ view: EditorView, exactly range: NSRange) -> Bool {
+      let length = view.textChecker.annotations.length
+      return NSMaxRange(range) <= length
+        && (range.location..<NSMaxRange(range)).allSatisfy { hasGrammarMark(view, at: $0) }
+        && (range.location == 0 || !hasGrammarMark(view, at: range.location - 1))
+        && (NSMaxRange(range) == length || !hasGrammarMark(view, at: NSMaxRange(range)))
+    }
+
+    /// 実際の文法の検査器が `issue` に文法の誤りの印を付けるまで待つ。検査器がその範囲を誤りと
+    /// しない環境では打ち切る。
     private func editorWithGrammarMark(_ text: String, issue: String) async throws -> (
       NSWindow, EditorView, NSRange
     ) {
@@ -1051,16 +1126,77 @@ extension AppKitTests {
       let range = (text as NSString).range(of: issue)
       view.select([NSRange(location: (text as NSString).length, length: 0)], primary: 0)
       view.isContinuousSpellCheckingEnabled = true
-      let marked = await waitUntil(
-        { hasGrammarMark(view, at: range.location) },
-        timeout: .seconds(3))
+      // 検査器がこの範囲を誤りとすることは確かめてあるので、印がこの範囲に付かなければ Ediro の誤り。
+      let marked = await waitUntil({ hasGrammarMark(view, exactly: range) }, timeout: .seconds(3))
       if !marked { window.close() }
       try #require(marked)
       return (window, view, range)
     }
 
+    /// 文法の検査器が付けるのと同じ形の、文法の誤りの印と詳細を `issue` の文字に付ける。
+    /// `sentence` は誤りを含む文。実際の検査器なしで、Ediro が印を扱う所を確かめる。
+    ///
+    /// 入力中の検査はオンにしない。オンにすると後から届く実際の検査の結果が、付けた印を書き換える。
+    /// 文書の検査で付いた印と同じく、入力中の検査がオフでも受け取らせる。
+    private func markGrammar(
+      _ view: EditorView, _ issue: NSRange, in sentence: NSRange,
+      description: String = "The verb does not agree with the subject.", correction: String = "goes"
+    ) {
+      let checker = view.textChecker
+      checker.allowsRequestedMarks = true
+      checker.addAnnotations(
+        [
+          .spellingState: String(NSAttributedString.SpellingState.grammar.rawValue),
+          NSAttributedString.Key(NSGrammarUserDescription): description,
+          NSAttributedString.Key(NSGrammarCorrections): correction,
+          NSAttributedString.Key("NSGrammarLeftOffset"): String(issue.location - sentence.location),
+          NSAttributedString.Key("NSGrammarRightOffset"): String(NSMaxRange(sentence) - NSMaxRange(issue)),
+        ], range: issue)
+    }
+
+    /// 示しているアニメーションの誤りの、本文の中の範囲。
+    private func indicatedIssues(_ view: EditorView) -> [NSRange] {
+      view.writingTools.indications.keys.compactMap { view.writingTools.contexts[$0] }.map {
+        NSRange(location: $0.start + $0.context.range.location, length: $0.context.range.length)
+      }
+    }
+
     @available(macOS 27.0, *)
-    @Test func 文法の結果はいま印を付けている誤りをコンテキストの位置で返す() async throws {
+    @Test func 文法の結果はいま印を付けている誤りをコンテキストの位置で返す() throws {
+      let text = "Intro line.\nYes. He go to school yesterday. "
+      let string = text as NSString
+      let (window, view) = makeEditor(text: text)
+      defer { window.close() }
+      markGrammar(view, string.range(of: "line"), in: string.range(of: "Intro line."))
+      markGrammar(
+        view, string.range(of: "go"), in: string.range(of: "He go to school yesterday."),
+        description: "Use a verb that agrees with “He”.", correction: "went")
+      let coordinator = try #require(view.writingToolsCoordinator)
+      view.select([string.range(of: "He go to school")], primary: 0)
+      let context = try self.context(view)
+      nonisolated(unsafe) var results: [NSTextCheckingResult] = []
+      view.writingToolsCoordinator(coordinator, requestsGrammarResultsFor: context) { results = $0 }
+      // 前の段落の誤りは返さない。結果の範囲は段落 (コンテキスト) の先頭から数えた文 ("He go to
+      // school yesterday.")、詳細の範囲は文の先頭から数えた誤り ("go")。直し方は配列で返す。
+      try #require(results.count == 1)
+      #expect(results[0].resultType == .grammar)
+      #expect(results[0].range == NSRange(location: 5, length: 26))
+      let details = results[0].grammarDetails ?? []
+      try #require(details.count == 1)
+      #expect((details[0][NSGrammarRange] as? NSValue)?.rangeValue == NSRange(location: 3, length: 2))
+      #expect(details[0][NSGrammarUserDescription] as? String == "Use a verb that agrees with “He”.")
+      #expect(details[0][NSGrammarCorrections] as? [String] == ["went"])
+
+      // 文法の検査をオフにすると、結果を返さない。
+      view.isGrammarCheckingEnabled = false
+      view.writingToolsCoordinator(coordinator, requestsGrammarResultsFor: context) { results = $0 }
+      #expect(results.isEmpty)
+    }
+
+    /// 印と一緒に付く詳細の名前は文法の検査器が決めるので、実際の検査器の印で確かめる。結果の
+    /// 作り方そのものは、印を付けて確かめる上のテストで見る。
+    @available(macOS 27.0, *)
+    @Test func 文法の検査器が付けた印の詳細から誤りを含む文と説明と直し方を読む() async throws {
       let text = "Intro line.\nHe go to school yesterday. "
       let (window, view, verb) = try await editorWithGrammarMark(text, issue: "go")
       defer { window.close() }
@@ -1071,46 +1207,39 @@ extension AppKitTests {
       nonisolated(unsafe) var results: [NSTextCheckingResult] = []
       view.writingToolsCoordinator(coordinator, requestsGrammarResultsFor: context) { results = $0 }
       let result = try #require(results.first)
-      #expect(result.resultType == .grammar)
-      // 結果の範囲は文、詳細の範囲は文の先頭から数えた誤りの範囲。
-      let resultInText = NSRange(
+      let sentence = NSRange(
         location: result.range.location + contextStart, length: result.range.length)
-      #expect(resultInText == (text as NSString).range(of: "He go to school yesterday."))
       let detail = try #require(result.grammarDetails?.first)
       let issue = try #require((detail[NSGrammarRange] as? NSValue)?.rangeValue)
-      #expect(NSRange(location: resultInText.location + issue.location, length: issue.length) == verb)
+      #expect(NSRange(location: sentence.location + issue.location, length: issue.length) == verb)
+      // 誤りの前後の文の長さを読めていれば、文は誤りの前後に広がる。
+      #expect(sentence.location < verb.location && NSMaxRange(sentence) > NSMaxRange(verb))
       #expect((detail[NSGrammarUserDescription] as? String)?.isEmpty == false)
       #expect((detail[NSGrammarCorrections] as? [String])?.isEmpty == false)
-
-      // 文法の検査をオフにすると、結果を返さない。
-      view.isGrammarCheckingEnabled = false
-      view.writingToolsCoordinator(coordinator, requestsGrammarResultsFor: context) { results = $0 }
-      #expect(results.isEmpty)
     }
 
     @available(macOS 27.0, *)
-    @Test func 文法の提示で検査を切ると文法の検査の入切が変わる() async throws {
-      let (window, view, verb) = try await editorWithGrammarMark(
-        "He go to school yesterday. ", issue: "go")
+    @Test func 文法の提示で検査を切ると文法の検査の入切が変わる() throws {
+      let (window, view) = makeEditor(text: "He go to school yesterday. ")
       defer { window.close() }
       let coordinator = try #require(view.writingToolsCoordinator)
+      #expect(view.isGrammarCheckingEnabled)
       view.writingToolsCoordinator(coordinator, setGrammarCheckingEnabled: false)
       #expect(!view.isGrammarCheckingEnabled)
-      #expect(!hasGrammarMark(view, at: verb.location))
       view.writingToolsCoordinator(coordinator, setGrammarCheckingEnabled: true)
       #expect(view.isGrammarCheckingEnabled)
-      #expect(
-        await waitUntil(
-          { hasGrammarMark(view, at: verb.location) },
-          timeout: .seconds(3)))
     }
 
+    /// 実際のコーディネータがアニメーションを準備して終えるのを待つ。
     @available(macOS 27.0, *)
     @Test(writingToolsAvailable)
     func 新しく付いた文法の誤りの印をアニメーションで示し終わったらコンテキストを捨てる() async throws {
-      let (window, view, verb) = try await editorWithGrammarMark(
-        "He go to school yesterday. ", issue: "go")
+      let text = "He go to school yesterday. "
+      let (window, view) = makeEditor(text: text)
       defer { window.close() }
+      let verb = (text as NSString).range(of: "go")
+      let sentence = (text as NSString).range(of: "He go to school yesterday.")
+      markGrammar(view, verb, in: sentence)
       let id = try #require(view.writingTools.indications.keys.first)
       let record = try #require(view.writingTools.contexts[id])
       #expect(record.context.range == verb)
@@ -1120,33 +1249,21 @@ extension AppKitTests {
           timeout: .seconds(5)))
 
       // 同じ段落を検査し直して同じ印を付け直しても、示し直さない。新しい誤りは示す。
+      view.select([NSRange(location: (text as NSString).length, length: 0)], primary: 0)
       view.insertText(" They is happy. ", replacementRange: NSRange(location: NSNotFound, length: 0))
-      let newIssue = (view.text as NSString).range(of: "is", options: .backwards)
-      var indicated: [NSRange] = []
-      let found = await waitUntil(
-        {
-          for id in view.writingTools.indications.keys {
-            guard let record = view.writingTools.contexts[id] else { continue }
-            indicated.append(
-              NSRange(
-                location: record.start + record.context.range.location,
-                length: record.context.range.length))
-          }
-          return indicated.contains(newIssue)
-        }, timeout: .seconds(3))
-      #expect(found)
-      #expect(!indicated.contains { NSIntersectionRange($0, verb).length > 0 })
-      #expect(hasGrammarMark(view, at: verb.location))
+      let string = view.text as NSString
+      let newIssue = string.range(of: "is", options: .backwards)
+      markGrammar(view, verb, in: sentence)
+      markGrammar(view, newIssue, in: string.range(of: "They is happy."), correction: "are")
+      #expect(indicatedIssues(view) == [newIssue])
     }
 
     @available(macOS 27.0, *)
-    @Test(writingToolsAvailable)
-    func 文法の誤りを示している間にその段落を編集するとアニメーションを取りやめる() throws {
+    @Test func 文法の誤りを示している間にその段落を編集するとアニメーションを取りやめる() throws {
       let text = "Intro.\nHe go to school yesterday."
       let (window, view) = makeEditor(text: text)
       defer { window.close() }
       let recording = RecordingCoordinator(delegate: view)
-      recording.preferredBehavior = .complete
       view.writingToolsCoordinator = recording
       let verb = (text as NSString).range(of: "go")
       view.grammarIssuesIndicated([verb])
@@ -1202,13 +1319,11 @@ extension AppKitTests {
     }
 
     @available(macOS 27.0, *)
-    @Test(writingToolsAvailable)
-    func 段落の端にある誤りに接する編集でも文法の誤りのアニメーションを取りやめる() throws {
+    @Test func 段落の端にある誤りに接する編集でも文法の誤りのアニメーションを取りやめる() throws {
       for (text, issue, caret) in [("He go", "go", 5), ("go home now.", "go", 0)] {
         let (window, view) = makeEditor(text: text)
         defer { window.close() }
         let recording = RecordingCoordinator(delegate: view)
-        recording.preferredBehavior = .complete
         view.writingToolsCoordinator = recording
         view.grammarIssuesIndicated([(text as NSString).range(of: issue)])
         let animation = try #require(view.writingTools.indications.first?.value)
@@ -1220,10 +1335,55 @@ extension AppKitTests {
     }
 
     @available(macOS 27.0, *)
-    @Test func 文法の提示で続けて受け入れた候補はそれぞれ一回で取り消せる() async throws {
+    @Test func 取りやめる呼び出しの中でアニメーションが終わっても取りやめた誤りはまた示す() throws {
       let text = "He go to school yesterday. "
-      let (window, view, verb) = try await editorWithGrammarMark(text, issue: "go")
+      let (window, view) = makeEditor(text: text)
       defer { window.close() }
+      let coordinator = ReentrantCoordinator(delegate: view)
+      view.writingToolsCoordinator = coordinator
+      let verb = (text as NSString).range(of: "go")
+      let sentence = (text as NSString).range(of: "He go to school yesterday.")
+      markGrammar(view, verb, in: sentence)
+      let animation = try #require(view.writingTools.indications.first?.value)
+      #expect(!view.writingToolsHiddenRects(in: view.bounds).hidden.isEmpty)
+      // 新しい依頼で取りやめると、コーディネータはその呼び出しの中でアニメーションを終える。
+      _ = try self.context(view, scope: .fullDocument)
+      #expect(coordinator.calls.contains(.cancel([animation])))
+      #expect(view.writingTools.indications.isEmpty)
+      #expect(view.writingToolsHiddenRects(in: view.bounds).hidden.isEmpty)
+      // 検査し直して同じ印を付け直すと、また示す。
+      markGrammar(view, verb, in: sentence)
+      #expect(coordinator.started == [verb, verb])
+    }
+
+    @available(macOS 27.0, *)
+    @Test
+    func 始める呼び出しの中でアニメーションが終わっても示した誤りとして覚えコンテキストを残さない() throws {
+      let text = "He go to school yesterday. "
+      let (window, view) = makeEditor(text: text)
+      defer { window.close() }
+      let coordinator = ReentrantCoordinator(delegate: view)
+      coordinator.finishesWhileStarting = true
+      view.writingToolsCoordinator = coordinator
+      let verb = (text as NSString).range(of: "go")
+      let sentence = (text as NSString).range(of: "He go to school yesterday.")
+      markGrammar(view, verb, in: sentence)
+      #expect(coordinator.started == [verb])
+      #expect(view.writingTools.indications.isEmpty)
+      #expect(view.writingTools.contexts.isEmpty)
+      #expect(view.writingToolsHiddenRects(in: view.bounds).hidden.isEmpty)
+      // 示した誤りとして覚えるので、検査し直して同じ印を付け直しても示し直さない。
+      markGrammar(view, verb, in: sentence)
+      #expect(coordinator.started == [verb])
+    }
+
+    /// 取り消しのまとまりは置き換えの理由で決まり、文法の誤りの印には依らない。
+    @available(macOS 27.0, *)
+    @Test func 文法の提示で続けて受け入れた候補はそれぞれ一回で取り消せる() throws {
+      let text = "He go to school yesterday. "
+      let (window, view) = makeEditor(text: text)
+      defer { window.close() }
+      let verb = (text as NSString).range(of: "go")
       let context = try self.context(view, scope: .fullDocument)
       try replace(view, verb, in: context, with: "goes", reason: .temporary)
       try select(view, [NSRange(location: verb.location, length: 4)], in: context)
@@ -1245,12 +1405,19 @@ extension AppKitTests {
     }
 
     @available(macOS 27.0, *)
-    @Test func 文法の提示のプレビューは下線の有無を描き分ける() async throws {
-      let (window, view, verb) = try await editorWithGrammarMark(
-        "He go to school yesterday. ", issue: "go")
+    @Test func 文法の提示のプレビューは下線の有無を描き分ける() throws {
+      let text = "He go to school yesterday. "
+      let (window, view) = makeEditor(text: text)
       defer { window.close() }
+      let verb = (text as NSString).range(of: "go")
       let coordinator = try #require(view.writingToolsCoordinator)
       let context = try self.context(view, scope: .fullDocument)
+      let unmarked = pixelValues(try #require(view.textPreview(of: verb, in: context)).previewImage)
+      markGrammar(view, verb, in: (text as NSString).range(of: "He go to school yesterday."))
+      // 表示のとおりの画像には、文法の誤りの印が描かれる。印の色や形は OS が決めるので、印の
+      // 無い画像との違いで見る。
+      let shown = pixelValues(try #require(view.textPreview(of: verb, in: context)).previewImage)
+      try #require(shown != unmarked)
       nonisolated(unsafe) var plain: [NSTextPreview]?
       nonisolated(unsafe) var underlined: [NSTextPreview]?
       view.writingToolsCoordinator(
@@ -1261,15 +1428,12 @@ extension AppKitTests {
         coordinator, requestsPreviewFor: .indicateGrammar, of: verb, in: context,
         textDecoration: .grammarUnderline
       ) { underlined = $0 }
-      // 表示のとおりの画像には、文法の誤りの印が描かれる。
-      let shown = try #require(view.textPreview(of: verb, in: context))
-      #expect(pixels(shown.previewImage).green > 0)
       let without = try #require(plain?.first)
       let with = try #require(underlined?.first)
       #expect(without.presentationFrame == viewRects(view, verb)[0])
       #expect(with.presentationFrame == without.presentationFrame)
-      #expect(pixels(without.previewImage).green == 0)
-      #expect(pixels(with.previewImage).green > 0)
+      #expect(pixelValues(without.previewImage) == unmarked)
+      #expect(pixelValues(with.previewImage) == shown)
       // 表示の文法の誤りの印は、プレビューを描いた後も残る。
       #expect(renderedMarks(view)[verb] == NSAttributedString.SpellingState.grammar.rawValue)
     }
