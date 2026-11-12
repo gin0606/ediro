@@ -58,8 +58,9 @@ public struct DocumentStore: Sendable {
   /// 今ディスクにある本文を直前の版として複製する。
   ///
   /// 移動ではなく複製にするのは、この後の書き込みが失敗したときに保存先を
-  /// 空にしないため。読めないファイルは `quarantine()` が退避するので、
-  /// 直前の版で潰してはいけない。
+  /// 空にしないため。中身が UTF-8 として読めるかは確かめずにそのまま複製する。
+  /// 読めない本文は、呼び出し側が保存の前に `quarantine()` で退避しておく。
+  /// 退避せずに保存すると、読めない本文が直前の版を置き換える。
   private func keepPreviousVersion() throws {
     guard let current = try? Data(contentsOf: fileURL) else { return }
     try current.write(to: previousURL, options: .atomic)

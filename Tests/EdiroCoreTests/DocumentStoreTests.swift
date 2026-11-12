@@ -75,11 +75,11 @@ private func previousVersion(of store: DocumentStore) -> URL {
   #expect(!FileManager.default.fileExists(atPath: previousVersion(of: store).path(percentEncoded: false)))
 }
 
-@Test func 退避待ちのファイルを直前の版で潰さない() throws {
+@Test func 退避してから保存すると退避した本文も直前の版も残る() throws {
   let store = makeStore()
   try store.save("直前の版として残したい本文")
   try store.save("この後に読めなくなる本文")
-  // UTF-8 として読めないバイト列。退避の対象で、直前の版として複製してよいものではない
+  // UTF-8 として読めないバイト列。読めない本文は保存の前に退避する
   try Data([0xFF, 0xFE]).write(to: store.fileURL)
 
   let moved = try #require(try store.quarantine())
@@ -88,6 +88,18 @@ private func previousVersion(of store: DocumentStore) -> URL {
   #expect(try Data(contentsOf: moved) == Data([0xFF, 0xFE]))
   #expect(
     try String(contentsOf: previousVersion(of: store), encoding: .utf8) == "直前の版として残したい本文")
+  #expect(try store.load() == "その後に書いた本文")
+}
+
+@Test func 退避せずに保存すると読めない本文を直前の版として残す() throws {
+  let store = makeStore()
+  try store.save("前の本文")
+  // 起動中に別のプロセスが書いた、UTF-8 として読めないバイト列
+  try Data([0xFF, 0xFE]).write(to: store.fileURL)
+
+  try store.save("その後に書いた本文")
+
+  #expect(try Data(contentsOf: previousVersion(of: store)) == Data([0xFF, 0xFE]))
   #expect(try store.load() == "その後に書いた本文")
 }
 
