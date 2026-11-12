@@ -26,7 +26,12 @@ import Testing
   #expect(h3 > 1)
 }
 
-@Test func 既定テーマは並び順ではなくIDで決まる() {
+@Test func 下線は内側の要素にも引き継ぐ() {
+  let inner = SyntaxStyle(bold: true).inside(SyntaxStyle(color: RGBA(hex: 0x4FC1FF), underline: true))
+  #expect(inner == SyntaxStyle(color: RGBA(hex: 0x4FC1FF), bold: true, underline: true))
+}
+
+@Test func 新規ユーザーの既定テーマはDarkGradientになる() {
   #expect(Theme.fallback.id == "dark-grad")
   #expect(Preferences.default.themeID == "dark-grad")
 }

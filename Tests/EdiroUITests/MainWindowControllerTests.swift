@@ -6,12 +6,6 @@ import Testing
 
 extension AppKitTests {
   struct MainWindowControllerTests {
-    @Test func ウィンドウには最小サイズが設定される() {
-      let controller = MainWindowController(state: makeState())
-      #expect(controller.window.contentMinSize.width > 0)
-      #expect(controller.window.contentMinSize.height > 0)
-    }
-
     @Test func 起動時にエディタがキー入力を受け取る() {
       let controller = MainWindowController(state: makeState())
       controller.show()
@@ -41,19 +35,13 @@ extension AppKitTests {
       let state = makeState()
       state.isShowingPreferences = true
       let controller = MainWindowController(state: state)
+      controller.show()
 
-      #expect(controller.windowShouldClose(controller.window) == false)
-      #expect(state.isShowingPreferences == false)
-    }
-
-    @Test func キーボードからの閉じる操作も同じ判断を通る() {
-      let state = makeState()
-      state.isShowingPreferences = true
-      let controller = MainWindowController(state: state)
-
+      // Cmd+W はメニューから performClose(_:) に届く。閉じるボタンと同じ判断を通ること
       controller.window.performClose(nil)
 
       #expect(state.isShowingPreferences == false)
+      #expect(controller.window.isVisible, "設定だけでなくウィンドウまで閉じている")
     }
 
     @Test func テーマの明暗がウィンドウの外観に反映される() async {

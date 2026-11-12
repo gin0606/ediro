@@ -108,19 +108,20 @@ extension AppKitTests {
       #expect(abs(plain - slanted) < 0.01, "\(sample) の桁揃えが崩れている")
     }
 
-    /// 太い字面を持たないフォントを実機から探す。無い環境では検証を省く。
-    private func fontFamilyWithoutBold() -> String? {
+    /// 太い字面を持たない等幅フォントを実機から探す。無い環境では確かめられないので、
+    /// 通ったように見せずに打ち切る。
+    private func requireFontFamilyWithoutBold() throws -> String {
       for family in NSFontManager.shared.availableFontFamilies {
         guard let font = NSFont(name: family, size: 13), font.isFixedPitch else { continue }
         let traits = font.fontDescriptor.symbolicTraits.union(.bold)
         let bold = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: 13)
         if bold == nil || bold?.fontName == font.fontName { return font.fontName }
       }
-      return nil
+      try Test.cancel("太い字面を持たない等幅フォントが無い環境なので、太字の合成を確かめられない")
     }
 
     @Test func 太い字面を持たないフォントでは太字の合成を要求する() throws {
-      guard let name = fontFamilyWithoutBold() else { return }
+      let name = try requireFontFamilyWithoutBold()
       var preferences = Preferences.default
       preferences.fontName = name
       let resolver = FontResolver(preferences: preferences)
@@ -131,7 +132,7 @@ extension AppKitTests {
     }
 
     @Test func 合成した太字は本文よりはっきり濃く描画される() throws {
-      guard let name = fontFamilyWithoutBold() else { return }
+      let name = try requireFontFamilyWithoutBold()
       var preferences = Preferences.default
       preferences.fontName = name
 
@@ -150,7 +151,7 @@ extension AppKitTests {
     }
 
     @Test func 合成した太字の縁は引き継いだ色で描く() throws {
-      guard let name = fontFamilyWithoutBold() else { return }
+      let name = try requireFontFamilyWithoutBold()
       var preferences = Preferences.default
       preferences.fontName = name
 

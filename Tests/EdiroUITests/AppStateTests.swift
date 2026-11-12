@@ -20,7 +20,7 @@ extension AppKitTests {
       let store = makeStore()
       let app = state(on: store)
       app.text = "すぐ書く本文"
-      app.flush()
+      #expect(app.flush(), "書き出せたのに失敗を返している")
 
       #expect(try store.load() == "すぐ書く本文")
     }
@@ -62,9 +62,6 @@ extension AppKitTests {
     @Test func 書き出す必要が無ければflushは成功を返す() throws {
       let app = state(on: makeStore())
       #expect(app.flush(), "編集していないのに失敗を返している")
-
-      app.text = "書ける本文"
-      #expect(app.flush())
     }
 
     @Test func 保存に失敗した理由を画面に出す() throws {

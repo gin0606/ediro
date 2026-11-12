@@ -68,9 +68,12 @@ extension AppKitTests {
 
     @Test func 異常の文面が出ても文字数の描画位置は変わらない() throws {
       let troubled = try troubledState()
-      // ウィンドウの最小幅。ここで崩れなければ広い幅でも崩れない
-      let plain = try render(NavBarView(state: plainState()), width: 320)
-      let noisy = try render(NavBarView(state: troubled), width: 320)
+      // ウィンドウの最小幅。ここで崩れなければ広い幅でも崩れない。最小幅が文字数の領域より
+      // 狭ければ、比べる前にその設定が崩れている
+      let width = MainWindowController(state: makeState()).window.contentMinSize.width
+      try #require(width >= 90, "ウィンドウの最小幅 \(width) が文字数の領域より狭い")
+      let plain = try render(NavBarView(state: plainState()), width: width)
+      let noisy = try render(NavBarView(state: troubled), width: width)
 
       // 先頭は "Characters: 7  Lines: 2" の領域。優先度が効いていれば、異常の
       // 文面が増えても同じ画素で描かれる

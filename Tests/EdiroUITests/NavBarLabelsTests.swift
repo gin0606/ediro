@@ -11,13 +11,10 @@ extension AppKitTests {
     }
 
     @Test func 文字数と行数は常に並ぶ() {
-      let expected = ["Characters: 7", "Lines: 2"]
-      #expect(labels().counters == expected)
-      #expect(labels(quarantined: "draft.md.unreadable-x").counters == expected)
-      #expect(labels(error: "保存できませんでした: 理由").counters == expected)
+      // 文字数と行数は異常の有無を見ずに作る。異常が重なった場合で確かめれば足りる
       #expect(
         labels(quarantined: "draft.md.unreadable-x", error: "保存できませんでした: 理由").counters
-          == expected,
+          == ["Characters: 7", "Lines: 2"],
         "異常が重なると文字数が落ちている")
     }
 

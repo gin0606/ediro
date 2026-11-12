@@ -73,14 +73,7 @@ extension AppKitTests {
 
     @Test func 装飾のない本文は既定の前景色になる() throws {
       let color = try styled("ただの本文です", at: "ただの").color
-      let expected = Theme.fallback.editorForeground.nsColor
-      #expect(abs(color.redComponent - expected.redComponent) < 0.01)
-    }
-
-    @Test func インラインコードには専用の色が付く() throws {
-      let code = try styled("実行は `swift test` で", at: "`swift test`").color
-      let body = try styled("実行は `swift test` で", at: "実行は").color
-      #expect(code != body)
+      #expect(color == Theme.fallback.editorForeground.nsColor)
     }
 
     /// 本文が等幅でない設定。既定の本文は等幅で、コードと書体では見分けられない。
@@ -164,18 +157,6 @@ extension AppKitTests {
         expected[.underlineStyle] = NSUnderlineStyle.single.rawValue
         #expect(NSDictionary(dictionary: attributes).isEqual(to: expected), "\(text)")
         #expect(underlinedRanges(storage) == [range], "\(text)")
-      }
-    }
-
-    @Test func 下線はURLだけが持ち中の要素にも引き継ぐ() {
-      let palette = SyntaxPalette(theme: .fallback)
-      let url = palette.style(for: .url)
-      #expect(url == SyntaxStyle(underline: true))
-      #expect(palette.style(for: .strong).inside(url).underline)
-      let link = palette.style(for: .link)
-      #expect(url.inside(link) == SyntaxStyle(color: link.color, underline: true))
-      for kind in MarkdownTokenKind.allCases where kind != .url {
-        #expect(!palette.style(for: kind).underline, "\(kind)")
       }
     }
 

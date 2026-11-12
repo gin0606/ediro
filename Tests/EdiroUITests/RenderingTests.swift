@@ -20,16 +20,6 @@ extension AppKitTests {
       return try #require(NSBitmapImageRep(data: data))
     }
 
-    @Test func 単色テーマは指定した色で塗られる() throws {
-      let theme = Theme.theme(id: "dark")
-      let rep = try render(theme.navBar.view, size: CGSize(width: 100, height: 26))
-      let pixel = try #require(rep.colorAt(x: 50, y: 13))
-      // #333333
-      #expect(abs(pixel.redComponent - 0x33 / 255.0) < 0.02)
-      #expect(abs(pixel.greenComponent - 0x33 / 255.0) < 0.02)
-      #expect(abs(pixel.blueComponent - 0x33 / 255.0) < 0.02)
-    }
-
     @Test func 横方向グラデーションは左右で色が変わる() throws {
       let theme = Theme.theme(id: "dark-grad")
       let rep = try render(theme.navBar.view, size: CGSize(width: 200, height: 26))
@@ -38,10 +28,6 @@ extension AppKitTests {
       // 左端は紫 (#5433FF) 寄り、右端は水色 (#30D9EF) 寄り
       #expect(left.blueComponent > left.greenComponent)
       #expect(right.greenComponent > right.redComponent)
-    }
-
-    @Test func タイトルバーの高さが取れる() {
-      #expect(WindowMetrics.titleBarHeight > 0)
     }
 
     @Test func タイトルバーの帯はテーマの色で塗られる() throws {

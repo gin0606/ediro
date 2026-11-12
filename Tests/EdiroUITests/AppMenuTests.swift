@@ -18,19 +18,18 @@ extension AppKitTests {
       #expect(titles == ["Ediro", "Edit", "Selection", "View", "Text", "Window"])
     }
 
-    @Test func 編集メニューに取り消しと複製の標準項目がある() throws {
-      // これらが無いと NSTextView の Cmd+C / Cmd+V / Cmd+Z が効かない
+    @Test func 編集メニューの標準項目は応答連鎖からエディタに届く() throws {
+      // これらが無いか宛先が固定されていると、EditorView に Cmd+C / Cmd+V / Cmd+Z が届かない
       let edit = try #require(menu("Edit"))
       let titles = edit.items.map(\.title)
       for expected in ["Undo", "Redo", "Cut", "Copy", "Paste", "Select All"] {
-        #expect(titles.contains(expected))
+        #expect(titles.contains(expected), "\(expected) が無い")
       }
-    }
-
-    @Test func 応答連鎖に流す項目は宛先を固定しない() throws {
-      let edit = try #require(menu("Edit"))
-      for item in edit.items where item.action != nil {
+      let editor = EditorView(text: "")
+      for item in edit.items {
+        guard let action = item.action else { continue }
         #expect(item.target == nil, "\(item.title) が特定の宛先に固定されている")
+        #expect(editor.responds(to: action), "\(item.title) の \(action) にエディタが応答しない")
       }
     }
 
@@ -66,28 +65,42 @@ extension AppKitTests {
       #expect(app.items.first?.title == "About Ediro")
     }
 
-    @Test func 閉じるはウィンドウメニューから応答連鎖に流す() throws {
+    @Test func ウィンドウ操作はウィンドウメニューから応答連鎖に流す() throws {
+      // 宛先を固定すると、バージョン情報のような別ウィンドウが前面にいても本体の窓に届いてしまう
       let window = try #require(menu("Window"))
-      let close = try #require(window.items.first { $0.title == "Close" })
-      #expect(close.keyEquivalent == "w")
-      #expect(close.target == nil)
-      #expect(close.action == #selector(NSWindow.performClose(_:)))
+      // Minimize のキー (⌘M) は AppKit が付け直すので、Ediro の設定としては確かめない。
+      let expected: [(title: String, key: String?, action: Selector)] = [
+        ("Close", "w", #selector(NSWindow.performClose(_:))),
+        ("Minimize", nil, #selector(NSWindow.performMiniaturize(_:))),
+        ("Zoom", "", #selector(NSWindow.performZoom(_:)))
+      ]
+      for (title, key, action) in expected {
+        let item = try #require(window.items.first { $0.title == title }, "\(title) が無い")
+        if let key { #expect(item.keyEquivalent == key, "\(title)") }
+        #expect(item.target == nil, "\(title)")
+        #expect(item.action == action, "\(title)")
+      }
     }
 
-    @Test func 閉じるは表示メニューに残っていない() throws {
-      let view = try #require(menu("View"))
-      #expect(!view.items.map(\.title).contains("Close"))
-    }
-
-    @Test func ウィンドウメニューに標準項目がある() throws {
-      let window = try #require(menu("Window"))
-      #expect(window.items.map(\.title).contains("Minimize"))
-      #expect(window.items.map(\.title).contains("Zoom"))
-
-      let minimize = try #require(window.items.first { $0.title == "Minimize" })
-      #expect(minimize.keyEquivalent == "m")
-      // ウィンドウ操作は第一応答者へ流す
-      #expect(minimize.target == nil)
+    @Test func メニューバー全体でキーと修飾の組が重複しない() {
+      // 同じ組を持つ項目が二つあると、打鍵は先に見つかった片方にしか届かない
+      var owners: [String: [String]] = [:]
+      func collect(_ menu: NSMenu) {
+        for item in menu.items {
+          if let submenu = item.submenu { collect(submenu) }
+          guard !item.keyEquivalent.isEmpty else { continue }
+          // 大文字のキーは Shift を含む組として扱われる
+          let key = item.keyEquivalent.lowercased()
+          var modifiers = item.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask)
+          if key != item.keyEquivalent { modifiers.insert(.shift) }
+          owners["\(modifiers.rawValue) \(key)", default: []].append(item.title)
+        }
+      }
+      collect(menuBar())
+      #expect(!owners.isEmpty)
+      for (combination, titles) in owners {
+        #expect(titles.count == 1, "\(titles) が同じ組 \(combination) を持つ")
+      }
     }
   }
 }
