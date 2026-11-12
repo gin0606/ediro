@@ -88,12 +88,10 @@ extension AppKitTests {
 
     // MARK: - URL を開く
 
-    @Test(arguments: [false, true])
-    func URLの文字の上のCmdクリックでURLを開きキャレットを動かさない(smartLinks: Bool) throws {
+    @Test func URLの文字の上のCmdクリックでURLを開きキャレットを動かさない() throws {
       let text = "see https://example.com/a now"
       let (window, view, opened) = makeEditor(text: text)
       defer { window.close() }
-      view.isAutomaticLinkDetectionEnabled = smartLinks
       view.select([caret(1)], primary: 0)
       for location in [4, 12, 24] {
         try click(view, at: try point(at: location, in: view), in: window)
@@ -679,28 +677,13 @@ extension AppKitTests {
       #expect(view.links.toolTip == nil)
     }
 
-    @Test func URLでない位置ではツールチップを出さない() throws {
-      let text = "see example.com and a@example.com\nhttps://example.com"
-      let (window, view, _) = makeEditor(text: text)
-      defer { window.close() }
-      let line = view.layout.visualLines()[1]
-      let right = view.convert(
-        NSPoint(x: line.frame.maxX + 100 + view.textOrigin.x, y: line.frame.midY + view.textOrigin.y),
-        to: nil)
-      for target in [try point(at: 1, in: view), try point(at: 6, in: view),
-        try point(at: 24, in: view), right]
-      {
-        try moveMouse(view, to: target, in: window)
-        #expect(view.links.toolTip == nil)
-      }
-    }
-
     @Test func ツールチップはurlトークンの文字の上にだけ付く() throws {
       let text = """
         [https://a.example](https://b.example)
         `https://c.example` and https://d.example
         <https://e.example> x@example.com www.f.example
         ## see **https://g.example**
+        see example.com
         """
       let string = text as NSString
       let urls = ["https://b.example", "https://d.example", "https://e.example", "https://g.example"]
@@ -713,6 +696,16 @@ extension AppKitTests {
           view.links.toolTip?.range == urls.first { NSLocationInRange(index, $0) },
           "index=\(index)")
       }
+      // URL で終わる行の右の余白へ URL の上から動くと外す。
+      try moveMouse(view, to: try point(at: NSMaxRange(urls[1]) - 1, in: view), in: window)
+      #expect(view.links.toolTip?.range == urls[1])
+      let line = try #require(
+        view.layout.visualLines().first { NSMaxRange($0.range) == NSMaxRange(urls[1]) + 1 })
+      let right = view.convert(
+        NSPoint(x: line.frame.maxX + 100 + view.textOrigin.x, y: line.frame.midY + view.textOrigin.y),
+        to: nil)
+      try moveMouse(view, to: right, in: window)
+      #expect(view.links.toolTip == nil)
     }
 
     @Test func 折り返したURLは行ごとに文字の上にだけツールチップを付けて全体を開く() throws {
