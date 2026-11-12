@@ -20,11 +20,32 @@ nonisolated struct CommandScenario: CustomTestStringConvertible, Sendable {
   let text: String
   let selection: NSRange
   let steps: [Step]
+  /// 操作の後の本文と選択。参照 NSTextView と比べるためだけの筋書きでは nil。
+  let expectedText: String?
+  let expectedSelection: NSRange?
 
   init(_ text: String, _ location: Int, _ length: Int, _ steps: Step...) {
+    self.init(text, NSRange(location: location, length: length), steps, nil, nil)
+  }
+
+  init(
+    _ text: String, _ location: Int, _ length: Int, _ steps: Step...,
+    then expectedText: String, _ expectedLocation: Int, _ expectedLength: Int
+  ) {
+    self.init(
+      text, NSRange(location: location, length: length), steps, expectedText,
+      NSRange(location: expectedLocation, length: expectedLength))
+  }
+
+  private init(
+    _ text: String, _ selection: NSRange, _ steps: [Step], _ expectedText: String?,
+    _ expectedSelection: NSRange?
+  ) {
     self.text = text
-    self.selection = NSRange(location: location, length: length)
+    self.selection = selection
     self.steps = steps
+    self.expectedText = expectedText
+    self.expectedSelection = expectedSelection
   }
 
   var testDescription: String {
@@ -43,6 +64,20 @@ nonisolated extension CommandScenario.Step: ExpressibleByStringLiteral {
   init(stringLiteral value: String) { self = .command(value) }
 }
 
+extension CommandScenario {
+  @MainActor func run(on view: EditorView) {
+    view.select([selection], primary: 0)
+    for step in steps {
+      switch step {
+      case .command(let name): view.doCommand(by: NSSelectorFromString(name))
+      case .type(let text):
+        view.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+      case .select(let range): view.select([range], primary: 0)
+      }
+    }
+  }
+}
+
 extension AppKitTests {
   struct KeyBindingCommandTests {
     private func makeEditor(text: String, width: CGFloat = 400) -> EditorView {
@@ -59,342 +94,394 @@ extension AppKitTests {
       view.session.selections.map { view.nsRange(of: $0.range) }
     }
 
-    // MARK: - 参照 NSTextView との差分
+    // MARK: - 単一の選択
 
-    nonisolated static let referenceScenarios: [CommandScenario] = [
-      // 入れ替え
-      .init("abcd", 2, 0, "transpose:"),
-      .init("abcd", 0, 0, "transpose:"),
-      .init("abcd", 4, 0, "transpose:"),
-      .init("abcd", 1, 2, "transpose:"),
-      .init("abcd", 2, 0, "transpose:", "transpose:"),
-      .init("aaaa", 1, 0, "transpose:"),
-      .init("a", 1, 0, "transpose:"),
-      .init("ab\ncd", 3, 0, "transpose:"),
-      .init("ab\ncd", 2, 0, "transpose:"),
-      .init("ab\n\ncd", 3, 0, "transpose:"),
-      .init("a\ncd", 1, 0, "transpose:"),
-      .init("\ncd", 1, 0, "transpose:"),
-      .init("a👍🏽b", 1, 0, "transpose:"),
-      .init("a👍🏽b", 5, 0, "transpose:"),
-      .init("ae\u{301}b", 3, 0, "transpose:"),
-      .init("ok 👍", 5, 0, "transpose:"),
-      .init("ae\u{301}", 3, 0, "transpose:"),
-      .init("👍b", 3, 0, "transpose:"),
+    // 各行は、本文と選択 (位置, 長さ)、送るコマンド、then: の後に操作後の本文と選択を書く。
+    // 値は置き換え前のエディタだった NSTextView の結果に合わせてある。標準の振る舞いが
+    // OS の更新で変わっていないかは KeyBindingReferenceTests で比べる。
+
+    nonisolated static let transposeScenarios: [CommandScenario] = [
+      .init("abcd", 2, 0, "transpose:", then: "acbd", 3, 0),
+      .init("abcd", 0, 0, "transpose:", then: "abcd", 0, 0),
+      .init("abcd", 4, 0, "transpose:", then: "abdc", 4, 0),
+      .init("abcd", 1, 2, "transpose:", then: "abcd", 1, 2),
+      .init("abcd", 2, 0, "transpose:", "transpose:", then: "acdb", 4, 0),
+      .init("aaaa", 1, 0, "transpose:", then: "aaaa", 2, 0),
+      .init("a", 1, 0, "transpose:", then: "a", 1, 0),
+      .init("ab\ncd", 3, 0, "transpose:", then: "abc\nd", 4, 0),
+      .init("ab\ncd", 2, 0, "transpose:", then: "ba\ncd", 2, 0),
+      .init("ab\n\ncd", 3, 0, "transpose:", then: "a\nb\ncd", 3, 0),
+      .init("a\ncd", 1, 0, "transpose:", then: "a\ncd", 1, 0),
+      .init("\ncd", 1, 0, "transpose:", then: "c\nd", 2, 0),
+      .init("a👍\u{1F3FD}b", 1, 0, "transpose:", then: "👍\u{1F3FD}ab", 5, 0),
+      .init("a👍\u{1F3FD}b", 5, 0, "transpose:", then: "ab👍\u{1F3FD}", 6, 0),
+      .init("ae\u{301}b", 3, 0, "transpose:", then: "abe\u{301}", 4, 0),
+      .init("ok 👍", 5, 0, "transpose:", then: "ok 👍", 5, 0),
+      .init("ae\u{301}", 3, 0, "transpose:", then: "ae\u{301}", 3, 0),
+      .init("👍b", 3, 0, "transpose:", then: "b👍", 3, 0),
       // 合成文字の途中のキャレットは、その文字の前にあるものとして扱う。
-      .init("xa\u{301}b", 2, 0, "transpose:"),
-      .init("ab\u{0C}cd", 2, 0, "transpose:"),
-      .init("ab\u{2028}cd", 2, 0, "transpose:"),
-      .init("ab\u{2029}cd", 2, 0, "transpose:"),
-      .init("ab\u{0B}cd", 2, 0, "transpose:"),
-      // kill buffer と yank
+      .init("xa\u{301}b", 2, 0, "transpose:", then: "a\u{301}xb", 3, 0),
+      .init("ab\u{C}cd", 2, 0, "transpose:", then: "ba\u{C}cd", 2, 0),
+      .init("ab\u{2028}cd", 2, 0, "transpose:", then: "ba\u{2028}cd", 2, 0),
+      .init("ab\u{2029}cd", 2, 0, "transpose:", then: "ba\u{2029}cd", 2, 0),
+      .init("ab\u{B}cd", 2, 0, "transpose:", then: "a\u{B}bcd", 3, 0),
+    ]
+
+    nonisolated static let killScenarios: [CommandScenario] = [
       .init(
         "one two\nthree four\nfive", 2, 0, "deleteToEndOfParagraph:", "deleteToEndOfParagraph:",
-        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:",
+        then: "on\nfivee two\nthree four", 23, 0),
       .init(
         "one two\nthree four\nfive", 2, 0, "deleteToEndOfParagraph:", "moveRight:",
-        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:",
+        then: "on\n\nfivethree four", 18, 0),
       .init(
         "one two\nthree four\nfive", 2, 0, "deleteToEndOfParagraph:", "moveRight:", "moveLeft:",
-        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:",
+        then: "onthree four\nfive\n", 18, 0),
       .init(
         "one two\nthree four\nfive", 2, 0, "deleteToEndOfParagraph:", "setMark:", "copy:",
-        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:",
+        then: "onthree four\nfivee two\n", 23, 0),
       .init(
         "one two\nthree four\nfive", 0, 0, "deleteToEndOfParagraph:", .type("X"),
-        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:",
+        then: "Xthree four\nfive\n", 17, 0),
       .init(
         "ab cd\nef gh\nij", 1, 0, "deleteToEndOfParagraph:", "scrollLineDown:",
-        "centerSelectionInVisibleArea:", "deleteToEndOfParagraph:", "moveToEndOfDocument:",
-        "yank:"),
+        "centerSelectionInVisibleArea:", "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:",
+        then: "aef gh\nijb cd\n", 14, 0),
       // 文字を消すだけの編集を挟んでも続き、選択を置き直すと元の位置でも続かない。
       .init(
         "one two\nthree", 2, 0, "deleteToEndOfParagraph:", "deleteBackward:",
-        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:", then: "othreee two\n", 12, 0),
       .init(
         "one two\nthree", 2, 0, "deleteToEndOfParagraph:", "deleteWordBackward:",
-        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:", then: "threee two\n", 11, 0),
       .init(
         "one two\nthree", 4, 0, "deleteToEndOfParagraph:",
         "deleteBackwardByDecomposingPreviousCharacter:", "deleteToEndOfParagraph:",
-        "moveToEndOfDocument:", "yank:"),
+        "moveToEndOfDocument:", "yank:", then: "onethreetwo\n", 12, 0),
       .init(
         "on\u{E9} two\nthree", 3, 0, "deleteToEndOfParagraph:",
         "deleteBackwardByDecomposingPreviousCharacter:", "deleteToEndOfParagraph:",
-        "moveToEndOfDocument:", "yank:"),
+        "moveToEndOfDocument:", "yank:", then: "onethree two\n", 13, 0),
       .init(
         "one two\nthree", 2, 0, "deleteToEndOfParagraph:", .select(NSRange(location: 2, length: 0)),
-        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:", then: "onthree\n", 8, 0),
       .init(
         "one two\nthree", 2, 0, "deleteToEndOfParagraph:", "moveToEndOfParagraph:",
-        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:", then: "onthree\n", 8, 0),
       .init(
         "ab cd\nef gh\nij", 1, 0, "deleteToEndOfLine:", "deleteToEndOfLine:",
-        "moveToEndOfDocument:", "yank:"),
+        "moveToEndOfDocument:", "yank:", then: "aef gh\nij\nb cd", 14, 0),
       .init(
         "ab cd\nef gh\nij", 1, 0, "deleteToEndOfParagraph:", "deleteToEndOfLine:",
-        "moveToEndOfDocument:", "yank:"),
+        "moveToEndOfDocument:", "yank:", then: "aef gh\nij\n", 10, 0),
       .init(
         "ab cd\nef gh\nij", 4, 0, "deleteToBeginningOfParagraph:", "deleteToEndOfParagraph:",
-        "moveToEndOfDocument:", "yank:"),
+        "moveToEndOfDocument:", "yank:", then: "\nef gh\nijd", 10, 0),
       .init(
         "ab cd\nef gh\nij", 4, 0, "setMark:", .select(NSRange(location: 1, length: 0)),
-        "deleteToMark:", "deleteToEndOfLine:", "moveToEndOfDocument:", "yank:"),
+        "deleteToMark:", "deleteToEndOfLine:", "moveToEndOfDocument:", "yank:",
+        then: "a\nef gh\nijdb c", 14, 0),
       .init(
         "ab cd\nef gh\nij", 4, 0, "setMark:", .select(NSRange(location: 1, length: 0)),
-        "deleteToMark:", "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
+        "deleteToMark:", "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:",
+        then: "a\nef gh\nijd", 11, 0),
       .init(
         "one two\nthree four\nfive", 6, 0, "deleteToBeginningOfLine:", "moveToEndOfDocument:",
-        "yank:"),
+        "yank:", then: "o\nthree four\nfiveone tw", 23, 0),
       .init(
-        "one two\nthree four\nfive", 10, 0, "deleteToBeginningOfParagraph:",
-        "moveToEndOfDocument:", "yank:"),
+        "one two\nthree four\nfive", 10, 0, "deleteToBeginningOfParagraph:", "moveToEndOfDocument:",
+        "yank:", then: "one two\nree four\nfiveth", 23, 0),
       .init(
         "one two\nthree four\nfive", 0, 3, "deleteToEndOfParagraph:", "moveToEndOfDocument:",
-        "yank:"),
+        "yank:", then: " two\nthree four\nfiveone", 23, 0),
       .init(
         "one two\nthree four\nfive", 4, 0, "deleteToEndOfParagraph:", "moveToEndOfDocument:",
-        "yank:", "yank:"),
+        "yank:", "yank:", then: "one \nthree four\nfivetwotwo", 26, 0),
       .init(
         "one two\nthree four\nfive", 4, 0, "deleteToEndOfParagraph:",
-        .select(NSRange(location: 0, length: 3)),
-        "yank:"),
-      .init("abc def\nghi jkl\nmno", 8, 0, "deleteToBeginningOfLine:"),
-      .init("abc def\nghi jkl\nmno", 8, 0, "deleteToBeginningOfParagraph:"),
-      .init("abc def\nghi jkl\nmno", 7, 0, "deleteToEndOfLine:"),
-      .init("abc def\nghi jkl\nmno", 19, 0, "deleteToEndOfParagraph:"),
-      // 改ページは行を終え、U+2028 は段落を終えない。
-      .init("ab\u{0C}cd", 0, 0, "deleteToEndOfLine:", "moveToEndOfDocument:", "yank:"),
-      .init("ab\u{0C}\ncd", 3, 0, "deleteToEndOfLine:"),
-      // 段落の末尾で改ページなどの直後にあるキャレットは、その文字で終わる行に属する。
-      .init("ab\u{0C}\ncd", 3, 0, "deleteToBeginningOfLine:"),
-      .init("ab\u{2028}\ncd", 3, 0, "deleteToBeginningOfLine:"),
-      .init("ab\u{2028}\ncd", 3, 0, "moveToBeginningOfLine:"),
-      .init("ab\u{2028}\ncd", 3, 0, "moveToEndOfLine:"),
-      .init("ab\u{0C}\ncd", 3, 0, "selectLine:"),
-      .init("ab\u{2028}\ncd", 3, 0, "selectLine:"),
-      .init("a\u{2028}\u{2028}b", 4, 0, "deleteToBeginningOfLine:"),
-      .init("a\u{2028}\u{2028}b", 4, 0, "selectLine:"),
-      // 文書の末尾の改ページは行の一部になる。U+2028 はならない。
-      .init("ab\u{0C}", 0, 0, "moveToEndOfLine:"),
-      .init("ab\u{0C}", 3, 0, "selectLine:"),
-      .init("ab\u{0C}", 2, 0, "selectLine:"),
-      .init("ab\u{2028}", 3, 0, "selectLine:"),
-      .init("ab\u{2028}", 0, 0, "moveToEndOfLine:"),
-      .init("ab\u{2028}cd", 0, 0, "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:"),
-      .init("ab\u{2028}cd", 4, 0, "deleteToBeginningOfParagraph:"),
-      // 印
-      .init("one two", 4, 0, "setMark:", "moveToEndOfDocument:", "selectToMark:"),
-      .init("one two", 4, 2, "setMark:", "moveToBeginningOfDocument:", "selectToMark:"),
-      .init("one two", 4, 2, "setMark:", "moveToBeginningOfDocument:", "swapWithMark:"),
+        .select(NSRange(location: 0, length: 3)), "yank:", then: "two \nthree four\nfive", 3, 0),
       .init(
-        "one two", 4, 2, "setMark:", "moveToBeginningOfDocument:", "swapWithMark:",
-        "swapWithMark:"),
+        "abc def\nghi jkl\nmno", 8, 0, "deleteToBeginningOfLine:",
+        then: "abc def\nghi jkl\nmno", 8, 0),
       .init(
-        "one two", 1, 0, "setMark:", .select(NSRange(location: 3, length: 2)), "swapWithMark:",
-        "selectToMark:"),
-      .init("one two", 1, 0, "setMark:", .select(NSRange(location: 3, length: 2)), "deleteToMark:"),
+        "abc def\nghi jkl\nmno", 8, 0, "deleteToBeginningOfParagraph:",
+        then: "abc def\nghi jkl\nmno", 8, 0),
+      .init("abc def\nghi jkl\nmno", 7, 0, "deleteToEndOfLine:", then: "abc defghi jkl\nmno", 7, 0),
       .init(
-        "one two", 4, 0, "setMark:", "moveToEndOfDocument:", "deleteToMark:",
-        "moveToBeginningOfDocument:", "yank:"),
-      .init(
-        "ab cd\nef gh\nij", 4, 0, "setMark:", .select(NSRange(location: 1, length: 0)),
-        "deleteToMark:", "deleteToBeginningOfParagraph:", "moveToEndOfDocument:", "yank:"),
-      .init(
-        "one two", 4, 0, "setMark:", "moveToBeginningOfDocument:", .type("XX"), "selectToMark:"),
-      .init(
-        "one two", 4, 0, "setMark:", .select(NSRange(location: 0, length: 7)), .type("X"),
-        "selectToMark:"),
-      .init("one two", 4, 0, "selectToMark:"),
-      .init("one two", 4, 0, "swapWithMark:"),
-      .init("one two", 4, 0, "deleteToMark:"),
-      // 印が無ければ選択を消す。消した位置に印を付け直す。
-      .init("one two", 1, 2, "deleteToMark:", "moveToEndOfDocument:", "yank:"),
-      .init("one two", 4, 3, "deleteToMark:", "selectToMark:"),
-      .init(
-        "one two three four", 8, 0, "setMark:", .select(NSRange(location: 2, length: 0)),
-        "deleteToMark:", "deleteToMark:"),
-      .init(
-        "one two three four", 8, 0, "setMark:", .select(NSRange(location: 2, length: 0)),
-        "deleteToMark:", "moveRight:", "selectToMark:"),
-      // 単語・行・段落の選択
-      .init("one two three", 5, 0, "selectWord:"),
-      .init("one two three", 3, 0, "selectWord:"),
-      .init("one two three", 4, 0, "selectWord:"),
-      .init("one two three", 0, 0, "selectWord:"),
-      .init("one two three", 13, 0, "selectWord:"),
-      .init("one two three", 5, 4, "selectWord:"),
-      .init("one two three", 4, 3, "selectWord:"),
-      .init("one two three", 3, 1, "selectWord:"),
-      .init("one  two", 4, 0, "selectWord:"),
-      .init("a, b", 2, 0, "selectWord:"),
-      .init("foo.bar baz", 3, 0, "selectWord:"),
-      .init("one two\nthree", 8, 0, "selectWord:"),
-      .init("ab\n\ncd", 3, 0, "selectWord:"),
-      .init("日本語の文章です", 1, 0, "selectWord:"),
-      .init("", 0, 0, "selectWord:"),
-      .init("ab\n", 3, 0, "selectWord:"),
-      .init("ab\n\n", 4, 0, "selectWord:"),
-      .init("ab\u{0C}cd", 3, 0, "selectWord:"),
-      .init("ab\u{2028}cd", 3, 0, "selectWord:"),
-      .init("ab\u{2029}cd", 3, 0, "selectWord:"),
-      .init("one two\nthree four\nfive", 10, 0, "selectLine:"),
-      .init("one two\nthree four\nfive", 7, 0, "selectLine:"),
-      .init("one two\nthree four\nfive", 2, 8, "selectLine:"),
-      .init("ab\ncd", 3, 2, "selectLine:"),
-      .init("ab\n\ncd", 3, 0, "selectLine:"),
-      .init("\n\n", 0, 0, "selectLine:"),
-      .init("\nfoo", 0, 0, "selectLine:"),
-      .init("\n", 0, 0, "selectLine:"),
-      .init("\n\nfoo", 0, 0, "selectLine:"),
-      .init("\n\n\n", 0, 0, "selectLine:"),
-      .init("\u{2029}\u{2029}", 0, 0, "selectLine:"),
-      .init("one two\n", 8, 0, "selectLine:"),
-      .init("", 0, 0, "selectLine:"),
-      .init("ab\u{0C}cd", 1, 0, "selectLine:"),
-      .init("ab\u{2028}cd", 1, 0, "selectLine:"),
-      .init("ab\u{2029}cd", 1, 0, "selectLine:"),
-      .init("ab\u{0085}cd", 1, 0, "selectLine:"),
-      .init("ab\u{0B}\ncd", 0, 0, "moveToEndOfLine:"),
-      .init("ab\u{0B}\ncd", 0, 0, "deleteToEndOfLine:"),
-      .init("ab\u{0B}cd", 3, 0, "selectWord:"),
-      .init("one two\nthree four\nfive", 10, 0, "selectParagraph:"),
-      .init("one two\nthree four\nfive", 20, 0, "selectParagraph:"),
-      .init("one two\nthree four\nfive", 2, 8, "selectParagraph:"),
-      .init("one two\nthree", 7, 0, "selectParagraph:"),
-      .init("ab\ncd\nef", 2, 1, "selectParagraph:"),
-      .init("one two\n\nfive", 8, 0, "selectParagraph:"),
-      .init("one two\n", 8, 0, "selectParagraph:"),
-      // スクロール (本文と選択は変えない)
-      .init("ab\ncd", 1, 0, "centerSelectionInVisibleArea:", "scrollLineDown:", "scrollLineUp:"),
-      // 文字の入力と削除
-      .init("ab", 1, 0, "insertSingleQuoteIgnoringSubstitution:"),
-      .init("ab", 0, 1, "insertDoubleQuoteIgnoringSubstitution:"),
-      .init("ab", 1, 0, "insertContainerBreak:"),
-      .init("ab", 1, 0, "insertBacktab:"),
-      .init("ab", 0, 1, "delete:"),
-      .init("ab", 1, 0, "delete:"),
-      .init("a\u{E9}", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("ae\u{301}", 3, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("a\u{1EC7}", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("a\u{D55C}", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("a\u{1100}\u{1161}\u{11AB}", 4, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("aが", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("a👍🏽", 5, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init(
-        "a\u{E9}", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:",
-        "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("ab", 0, 1, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("ab", 0, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("a\nb", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      .init("ae\u{301}b", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:"),
-      // 単語の変換。選択を単語の境界まで広げて変換し、変換した範囲を選ぶ。
-      .init("hello world foo", 2, 0, "uppercaseWord:"),
-      .init("hello world foo", 5, 0, "uppercaseWord:"),
-      .init("hello world foo", 6, 0, "uppercaseWord:"),
-      .init("hello  world foo", 6, 0, "uppercaseWord:"),
-      .init("hello world foo", 15, 0, "uppercaseWord:"),
-      .init("hello world foo", 0, 0, "uppercaseWord:"),
-      .init("hello world foo", 2, 5, "uppercaseWord:"),
-      .init("hello world foo", 2, 5, "capitalizeWord:"),
-      .init("hello WORLD o'neil foo-bar 3rd ÉCOLE straße", 0, 42, "capitalizeWord:"),
-      .init("hello WORLD o'neil foo-bar 3rd ÉCOLE straße", 0, 42, "uppercaseWord:"),
-      .init("HELLO World", 0, 11, "lowercaseWord:"),
-      .init("hello WORLD", 8, 0, "capitalizeWord:"),
-      .init("hello WORLD", 8, 0, "lowercaseWord:"),
-      .init("a\nb", 0, 3, "uppercaseWord:"),
-      .init("", 0, 0, "uppercaseWord:"),
-      .init("abc 123 ｱｲｳ ﾃﾞｽ", 0, 14, "convertToFullWidth:"),
-      .init("ＡＢＣ　１２３ アイウ デス", 0, 14, "convertToHalfWidth:"),
-      .init("abc", 1, 0, "convertToFullWidth:"),
-      .init("abc def", 1, 4, "convertToFullWidth:"),
-      .init("漢字 汉字", 0, 5, "convertToSimplifiedChinese:"),
-      .init("漢字 汉字", 0, 5, "convertToTraditionalChinese:"),
-      .init("日本語の文章です", 0, 8, "convertToSimplifiedChinese:"),
+        "abc def\nghi jkl\nmno", 19, 0, "deleteToEndOfParagraph:",
+        then: "abc def\nghi jkl\nmno", 19, 0),
     ]
 
-    private func run(_ scenario: CommandScenario, on view: EditorView) {
-      view.select([scenario.selection], primary: 0)
-      for step in scenario.steps {
-        switch step {
-        case .command(let name): view.doCommand(by: NSSelectorFromString(name))
-        case .type(let text): view.insertText(text, replacementRange: caret(NSNotFound))
-        case .select(let range): view.select([range], primary: 0)
-        }
-      }
-    }
+    nonisolated static let lineBreakScenarios: [CommandScenario] = [
+      // 改ページは行を終え、U+2028 は段落を終えない。
+      .init(
+        "ab\u{C}cd", 0, 0, "deleteToEndOfLine:", "moveToEndOfDocument:", "yank:",
+        then: "\u{C}cdab", 5, 0),
+      .init("ab\u{C}\ncd", 3, 0, "deleteToEndOfLine:", then: "ab\u{C}cd", 3, 0),
+      // 段落の末尾で改ページなどの直後にあるキャレットは、その文字で終わる行に属する。
+      .init("ab\u{C}\ncd", 3, 0, "deleteToBeginningOfLine:", then: "\ncd", 0, 0),
+      .init("ab\u{2028}\ncd", 3, 0, "deleteToBeginningOfLine:", then: "\ncd", 0, 0),
+      .init("ab\u{2028}\ncd", 3, 0, "moveToBeginningOfLine:", then: "ab\u{2028}\ncd", 0, 0),
+      .init("ab\u{2028}\ncd", 3, 0, "moveToEndOfLine:", then: "ab\u{2028}\ncd", 3, 0),
+      .init("ab\u{C}\ncd", 3, 0, "selectLine:", then: "ab\u{C}\ncd", 0, 2),
+      .init("ab\u{2028}\ncd", 3, 0, "selectLine:", then: "ab\u{2028}\ncd", 0, 2),
+      .init(
+        "a\u{2028}\u{2028}b", 4, 0, "deleteToBeginningOfLine:", then: "a\u{2028}\u{2028}", 3, 0),
+      .init("a\u{2028}\u{2028}b", 4, 0, "selectLine:", then: "a\u{2028}\u{2028}b", 3, 1),
+      // 文書の末尾の改ページは行の一部になる。U+2028 はならない。
+      .init("ab\u{C}", 0, 0, "moveToEndOfLine:", then: "ab\u{C}", 3, 0),
+      .init("ab\u{C}", 3, 0, "selectLine:", then: "ab\u{C}", 0, 3),
+      .init("ab\u{C}", 2, 0, "selectLine:", then: "ab\u{C}", 0, 3),
+      .init("ab\u{2028}", 3, 0, "selectLine:", then: "ab\u{2028}", 0, 2),
+      .init("ab\u{2028}", 0, 0, "moveToEndOfLine:", then: "ab\u{2028}", 2, 0),
+      .init(
+        "ab\u{2028}cd", 0, 0, "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:",
+        then: "ab\u{2028}cd", 5, 0),
+      .init("ab\u{2028}cd", 4, 0, "deleteToBeginningOfParagraph:", then: "d", 0, 0),
+    ]
 
-    private func run(_ scenario: CommandScenario, on textView: NSTextView) {
-      textView.setSelectedRange(scenario.selection)
-      for step in scenario.steps {
-        switch step {
-        case .command(let name): textView.doCommand(by: NSSelectorFromString(name))
-        case .type(let text): textView.insertText(text, replacementRange: caret(NSNotFound))
-        case .select(let range): textView.setSelectedRange(range)
-        }
-      }
-    }
+    nonisolated static let markScenarios: [CommandScenario] = [
+      .init(
+        "one two", 4, 0, "setMark:", "moveToEndOfDocument:", "selectToMark:",
+        then: "one two", 4, 3),
+      .init(
+        "one two", 4, 2, "setMark:", "moveToBeginningOfDocument:", "selectToMark:",
+        then: "one two", 0, 6),
+      .init(
+        "one two", 4, 2, "setMark:", "moveToBeginningOfDocument:", "swapWithMark:",
+        then: "one two", 4, 2),
+      .init(
+        "one two", 4, 2, "setMark:", "moveToBeginningOfDocument:", "swapWithMark:", "swapWithMark:",
+        then: "one two", 0, 0),
+      .init(
+        "one two", 1, 0, "setMark:", .select(NSRange(location: 3, length: 2)), "swapWithMark:",
+        "selectToMark:", then: "one two", 1, 4),
+      .init(
+        "one two", 1, 0, "setMark:", .select(NSRange(location: 3, length: 2)), "deleteToMark:",
+        then: "owo", 1, 0),
+      .init(
+        "one two", 4, 0, "setMark:", "moveToEndOfDocument:", "deleteToMark:",
+        "moveToBeginningOfDocument:", "yank:", then: "twoone ", 3, 0),
+      .init(
+        "ab cd\nef gh\nij", 4, 0, "setMark:", .select(NSRange(location: 1, length: 0)),
+        "deleteToMark:", "deleteToBeginningOfParagraph:", "moveToEndOfDocument:", "yank:",
+        then: "d\nef gh\nijab c", 14, 0),
+      .init(
+        "one two", 4, 0, "setMark:", "moveToBeginningOfDocument:", .type("XX"), "selectToMark:",
+        then: "XXone two", 2, 2),
+      .init(
+        "one two", 4, 0, "setMark:", .select(NSRange(location: 0, length: 7)), .type("X"),
+        "selectToMark:", then: "X", 1, 0),
+      .init("one two", 4, 0, "selectToMark:", then: "one two", 4, 0),
+      .init("one two", 4, 0, "swapWithMark:", then: "one two", 4, 0),
+      .init("one two", 4, 0, "deleteToMark:", then: "one two", 4, 0),
+      // 印が無ければ選択を消す。消した位置に印を付け直す。
+      .init(
+        "one two", 1, 2, "deleteToMark:", "moveToEndOfDocument:", "yank:", then: "o twone", 7, 0),
+      .init("one two", 4, 3, "deleteToMark:", "selectToMark:", then: "one ", 4, 0),
+      .init(
+        "one two three four", 8, 0, "setMark:", .select(NSRange(location: 2, length: 0)),
+        "deleteToMark:", "deleteToMark:", then: "onthree four", 2, 0),
+      .init(
+        "one two three four", 8, 0, "setMark:", .select(NSRange(location: 2, length: 0)),
+        "deleteToMark:", "moveRight:", "selectToMark:", then: "onthree four", 2, 1),
+    ]
 
-    @Test(arguments: referenceScenarios)
-    func 単一の選択では参照と同じ本文と選択になる(scenario: CommandScenario) {
-      let reference = ReferenceTextView(text: scenario.text)
-      defer { reference.close() }
-      run(scenario, on: reference.textView)
+    nonisolated static let selectionScenarios: [CommandScenario] = [
+      .init("one two three", 5, 0, "selectWord:", then: "one two three", 4, 3),
+      .init("one two three", 3, 0, "selectWord:", then: "one two three", 0, 3),
+      .init("one two three", 4, 0, "selectWord:", then: "one two three", 3, 1),
+      .init("one two three", 0, 0, "selectWord:", then: "one two three", 0, 3),
+      .init("one two three", 13, 0, "selectWord:", then: "one two three", 8, 5),
+      .init("one two three", 5, 4, "selectWord:", then: "one two three", 4, 9),
+      .init("one two three", 4, 3, "selectWord:", then: "one two three", 4, 3),
+      .init("one two three", 3, 1, "selectWord:", then: "one two three", 3, 1),
+      .init("one  two", 4, 0, "selectWord:", then: "one  two", 3, 2),
+      .init("a, b", 2, 0, "selectWord:", then: "a, b", 1, 1),
+      .init("foo.bar baz", 3, 0, "selectWord:", then: "foo.bar baz", 0, 7),
+      .init("one two\nthree", 8, 0, "selectWord:", then: "one two\nthree", 8, 5),
+      .init("ab\n\ncd", 3, 0, "selectWord:", then: "ab\n\ncd", 3, 1),
+      .init("", 0, 0, "selectWord:", then: "", 0, 0),
+      .init("ab\n", 3, 0, "selectWord:", then: "ab\n", 2, 1),
+      .init("ab\n\n", 4, 0, "selectWord:", then: "ab\n\n", 3, 1),
+      .init("ab\u{C}cd", 3, 0, "selectWord:", then: "ab\u{C}cd", 3, 2),
+      .init("ab\u{2028}cd", 3, 0, "selectWord:", then: "ab\u{2028}cd", 3, 2),
+      .init("ab\u{2029}cd", 3, 0, "selectWord:", then: "ab\u{2029}cd", 3, 2),
+      .init(
+        "one two\nthree four\nfive", 10, 0, "selectLine:",
+        then: "one two\nthree four\nfive", 8, 11),
+      .init(
+        "one two\nthree four\nfive", 7, 0, "selectLine:", then: "one two\nthree four\nfive", 0, 8),
+      .init(
+        "one two\nthree four\nfive", 2, 8, "selectLine:", then: "one two\nthree four\nfive", 0, 8),
+      .init("ab\ncd", 3, 2, "selectLine:", then: "ab\ncd", 3, 2),
+      .init("ab\n\ncd", 3, 0, "selectLine:", then: "ab\n\ncd", 3, 0),
+      .init("\n\n", 0, 0, "selectLine:", then: "\n\n", 0, 1),
+      .init("\nfoo", 0, 0, "selectLine:", then: "\nfoo", 0, 0),
+      .init("\n", 0, 0, "selectLine:", then: "\n", 0, 0),
+      .init("\n\nfoo", 0, 0, "selectLine:", then: "\n\nfoo", 0, 1),
+      .init("\n\n\n", 0, 0, "selectLine:", then: "\n\n\n", 0, 1),
+      .init("\u{2029}\u{2029}", 0, 0, "selectLine:", then: "\u{2029}\u{2029}", 0, 1),
+      .init("one two\n", 8, 0, "selectLine:", then: "one two\n", 8, 0),
+      .init("", 0, 0, "selectLine:", then: "", 0, 0),
+      .init("ab\u{C}cd", 1, 0, "selectLine:", then: "ab\u{C}cd", 0, 2),
+      .init("ab\u{2028}cd", 1, 0, "selectLine:", then: "ab\u{2028}cd", 0, 2),
+      .init("ab\u{2029}cd", 1, 0, "selectLine:", then: "ab\u{2029}cd", 0, 3),
+      .init("ab\u{85}cd", 1, 0, "selectLine:", then: "ab\u{85}cd", 0, 2),
+      .init("ab\u{B}\ncd", 0, 0, "moveToEndOfLine:", then: "ab\u{B}\ncd", 3, 0),
+      .init("ab\u{B}\ncd", 0, 0, "deleteToEndOfLine:", then: "\ncd", 0, 0),
+      .init("ab\u{B}cd", 3, 0, "selectWord:", then: "ab\u{B}cd", 2, 1),
+      .init(
+        "one two\nthree four\nfive", 10, 0, "selectParagraph:",
+        then: "one two\nthree four\nfive", 8, 11),
+      .init(
+        "one two\nthree four\nfive", 20, 0, "selectParagraph:",
+        then: "one two\nthree four\nfive", 19, 4),
+      .init(
+        "one two\nthree four\nfive", 2, 8, "selectParagraph:",
+        then: "one two\nthree four\nfive", 0, 19),
+      .init("one two\nthree", 7, 0, "selectParagraph:", then: "one two\nthree", 0, 8),
+      .init("ab\ncd\nef", 2, 1, "selectParagraph:", then: "ab\ncd\nef", 0, 3),
+      .init("one two\n\nfive", 8, 0, "selectParagraph:", then: "one two\n\nfive", 8, 1),
+      .init("one two\n", 8, 0, "selectParagraph:", then: "one two\n", 8, 0),
+    ]
+
+    nonisolated static let editingScenarios: [CommandScenario] = [
+      // スクロールは本文と選択を変えない。
+      .init(
+        "ab\ncd", 1, 0, "centerSelectionInVisibleArea:", "scrollLineDown:", "scrollLineUp:",
+        then: "ab\ncd", 1, 0),
+      // 文字の入力と削除
+      .init("ab", 1, 0, "insertSingleQuoteIgnoringSubstitution:", then: "a'b", 2, 0),
+      .init("ab", 0, 1, "insertDoubleQuoteIgnoringSubstitution:", then: "\"b", 1, 0),
+      .init("ab", 1, 0, "insertContainerBreak:", then: "a\u{C}b", 2, 0),
+      .init("ab", 1, 0, "insertBacktab:", then: "ab", 1, 0),
+      .init("ab", 0, 1, "delete:", then: "b", 0, 0),
+      .init("ab", 1, 0, "delete:", then: "ab", 1, 0),
+      .init("a\u{E9}", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "ae", 2, 0),
+      .init("ae\u{301}", 3, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "ae", 2, 0),
+      .init(
+        "a\u{1EC7}", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:",
+        then: "ae\u{323}", 3, 0),
+      .init(
+        "a\u{D55C}", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:",
+        then: "a\u{1112}\u{1161}", 3, 0),
+      .init(
+        "a\u{1100}\u{1161}\u{11AB}", 4, 0, "deleteBackwardByDecomposingPreviousCharacter:",
+        then: "a\u{1100}\u{1161}", 3, 0),
+      .init("aが", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "aか", 2, 0),
+      .init(
+        "a👍\u{1F3FD}", 5, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "a👍", 3, 0),
+      .init(
+        "a\u{E9}", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:",
+        "deleteBackwardByDecomposingPreviousCharacter:", then: "a", 1, 0),
+      .init("ab", 0, 1, "deleteBackwardByDecomposingPreviousCharacter:", then: "b", 0, 0),
+      .init("ab", 0, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "ab", 0, 0),
+      .init("a\nb", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "ab", 1, 0),
+      .init(
+        "ae\u{301}b", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:",
+        then: "e\u{301}b", 0, 0),
+    ]
+
+    /// 選択を単語の境界まで広げて変換し、変換した範囲を選ぶ。
+    nonisolated static let wordTransformScenarios: [CommandScenario] = [
+      .init("hello world foo", 2, 0, "uppercaseWord:", then: "HELLO world foo", 0, 5),
+      .init("hello world foo", 5, 0, "uppercaseWord:", then: "HELLO world foo", 0, 5),
+      .init("hello world foo", 6, 0, "uppercaseWord:", then: "hello world foo", 5, 1),
+      .init("hello  world foo", 6, 0, "uppercaseWord:", then: "hello  world foo", 5, 2),
+      .init("hello world foo", 15, 0, "uppercaseWord:", then: "hello world FOO", 12, 3),
+      .init("hello world foo", 0, 0, "uppercaseWord:", then: "HELLO world foo", 0, 5),
+      .init("hello world foo", 2, 5, "uppercaseWord:", then: "HELLO WORLD foo", 0, 11),
+      .init("hello world foo", 2, 5, "capitalizeWord:", then: "Hello World foo", 0, 11),
+      .init(
+        "hello WORLD o'neil foo-bar 3rd ÉCOLE straße", 0, 42, "capitalizeWord:",
+        then: "Hello World O'neil Foo-Bar 3Rd École Straße", 0, 43),
+      .init(
+        "hello WORLD o'neil foo-bar 3rd ÉCOLE straße", 0, 42, "uppercaseWord:",
+        then: "HELLO WORLD O'NEIL FOO-BAR 3RD ÉCOLE STRASSE", 0, 44),
+      .init("HELLO World", 0, 11, "lowercaseWord:", then: "hello world", 0, 11),
+      .init("hello WORLD", 8, 0, "capitalizeWord:", then: "hello World", 6, 5),
+      .init("hello WORLD", 8, 0, "lowercaseWord:", then: "hello world", 6, 5),
+      .init("a\nb", 0, 3, "uppercaseWord:", then: "A\nB", 0, 3),
+      .init("", 0, 0, "uppercaseWord:", then: "", 0, 0),
+      .init(
+        "abc 123 ｱｲｳ ﾃﾞｽ", 0, 15, "convertToFullWidth:",
+        then: "ａｂｃ　１２３　アイウ　デス", 0, 14),
+      .init(
+        "ＡＢＣ　１２３ アイウ デス", 0, 14, "convertToHalfWidth:", then: "ABC 123 ｱｲｳ ﾃﾞｽ", 0, 15),
+      .init("abc def", 1, 4, "convertToFullWidth:", then: "ａｂｃ　ｄｅｆ", 0, 7),
+      .init(
+        "日本語の文章です", 0, 8, "convertToSimplifiedChinese:", then: "日本语の文章です", 0, 8),
+    ]
+
+    private func check(_ scenario: CommandScenario) {
       let view = makeEditor(text: scenario.text)
-      run(scenario, on: view)
-      #expect(view.text == reference.textView.string)
-      #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
+      scenario.run(on: view)
+      #expect(view.text == scenario.expectedText)
+      #expect(ranges(view) == scenario.expectedSelection.map { [$0] })
     }
+
+    @Test(arguments: transposeScenarios)
+    func 入れ替えは表の本文と選択になる(scenario: CommandScenario) { check(scenario) }
+
+    @Test(arguments: killScenarios)
+    func 行や段落の消去とyankは表の本文と選択になる(scenario: CommandScenario) { check(scenario) }
+
+    @Test(arguments: lineBreakScenarios)
+    func 改ページや行区切りの前後の操作は表の本文と選択になる(scenario: CommandScenario) {
+      check(scenario)
+    }
+
+    @Test(arguments: markScenarios)
+    func 印の操作は表の本文と選択になる(scenario: CommandScenario) { check(scenario) }
+
+    @Test(arguments: selectionScenarios)
+    func 単語と行と段落の選択は表の選択になる(scenario: CommandScenario) { check(scenario) }
+
+    @Test(arguments: editingScenarios)
+    func 文字の入力と削除は表の本文と選択になる(scenario: CommandScenario) { check(scenario) }
+
+    @Test(arguments: wordTransformScenarios)
+    func 単語の変換は表の本文と選択になる(scenario: CommandScenario) { check(scenario) }
 
     // MARK: - 応答するセレクタ
 
-    /// 参照 NSTextView が応答し、このエディタが応答しないもの。
-    ///
-    /// 実装しないもの:
-    /// - 書字方向: 段落スタイルの属性で、Markdown の装飾が本文全体の段落スタイルを置き直す
-    ///   ため、旧版でも次の編集で元に戻っていた。
-    /// - Quick Look: 添付ファイルを見せる操作で、書式なしの本文には添付が無い。
-    static let notImplemented: Set<String> = [
-      "makeBaseWritingDirectionLeftToRight:", "makeBaseWritingDirectionNatural:",
-      "makeBaseWritingDirectionRightToLeft:", "makeTextWritingDirectionLeftToRight:",
-      "makeTextWritingDirectionNatural:", "makeTextWritingDirectionRightToLeft:",
-      "toggleBaseWritingDirection:", "quickLookPreviewItems:", "toggleQuickLookPreviewPanel:",
+    /// キーバインドから届くセレクタのうち、EditorView が自分で処理しなければならず、ほかの
+    /// テストでは動かしていないもの。実装が消えたり名前を誤ったりすると、キーを押しても何も
+    /// 起きなくなる。
+    nonisolated static let ownSelectors = [
+      "deleteWordForward:", "insertLineBreak:", "insertNewlineIgnoringFieldEditor:",
+      "insertParagraphSeparator:", "insertTabIgnoringFieldEditor:",
+      "moveBackward:", "moveBackwardAndModifySelection:", "moveForward:",
+      "moveForwardAndModifySelection:", "moveLeftAndModifySelection:", "moveRightAndModifySelection:",
+      "moveUpAndModifySelection:", "moveDownAndModifySelection:",
+      "moveWordBackward:", "moveWordBackwardAndModifySelection:", "moveWordForward:",
+      "moveWordForwardAndModifySelection:", "moveWordLeft:", "moveWordRightAndModifySelection:",
+      "moveParagraphBackwardAndModifySelection:", "moveParagraphForwardAndModifySelection:",
+      "moveToBeginningOfParagraphAndModifySelection:", "moveToEndOfParagraphAndModifySelection:",
+      "moveToEndOfLineAndModifySelection:", "moveToLeftEndOfLineAndModifySelection:",
+      "moveToRightEndOfLineAndModifySelection:", "moveToBeginningOfDocumentAndModifySelection:",
+      "moveToEndOfDocumentAndModifySelection:",
+      "pageUp:", "pageDown:", "pageUpAndModifySelection:", "pageDownAndModifySelection:",
+      "scrollPageUp:", "scrollPageDown:", "scrollToBeginningOfDocument:", "scrollToEndOfDocument:",
     ]
 
     /// その型が自分で実装しているか。NSView から継承しただけの応答は数えない。
-    private func implements(_ type: AnyClass, _ selector: Selector) -> Bool {
+    static func implements(_ type: AnyClass, _ selector: Selector) -> Bool {
       guard let own = class_getInstanceMethod(type, selector).map(method_getImplementation) else {
         return false
       }
       return own != class_getInstanceMethod(NSView.self, selector).map(method_getImplementation)
     }
 
-    @Test func 応答するセレクタの差は実装しないものだけ() throws {
-      let proto = try #require(objc_getProtocol("NSStandardKeyBindingResponding"))
-      var selectors: [Selector] = []
-      for required in [true, false] {
-        var count: UInt32 = 0
-        guard let list = protocol_copyMethodDescriptionList(proto, required, true, &count) else {
-          continue
-        }
-        selectors += (0..<Int(count)).compactMap { list[$0].name }
-        free(list)
-      }
-      try #require(!selectors.isEmpty)
-      // NSStandardKeyBindingResponding に無い、NSTextView の編集の action のうち、キーバインドの
-      // 一覧と合わせて扱うもの。
-      selectors += ["delete:", "toggleBaseWritingDirection:", "toggleQuickLookPreviewPanel:"]
-        .map(NSSelectorFromString)
-
-      let missing = Set(
-        selectors.filter { implements(NSTextView.self, $0) && !implements(EditorView.self, $0) }
-          .map(NSStringFromSelector))
-      #expect(missing == Self.notImplemented)
-      let extra = Set(
-        selectors.filter { !implements(NSTextView.self, $0) && implements(EditorView.self, $0) }
-          .map(NSStringFromSelector))
-      // Esc で複数のキャレットを一つに戻す。NSTextView には無い。
-      #expect(extra == ["cancelOperation:"])
+    @Test(arguments: ownSelectors)
+    func キーバインドのセレクタをEditorViewが自分で実装する(selector: String) {
+      #expect(Self.implements(EditorView.self, NSSelectorFromString(selector)))
     }
 
     // MARK: - 複数の選択
@@ -740,66 +827,47 @@ extension AppKitTests {
       #expect(last.location > 0)
     }
 
-    private func wrappedReference(for view: EditorView) -> ReferenceTextView {
-      let reference = ReferenceTextView(text: view.text)
-      reference.textView.textContainer?.widthTracksTextView = false
-      reference.textView.textContainer?.size = view.layout.container.size
-      reference.textView.textContainer?.lineFragmentPadding = view.layout.container.lineFragmentPadding
-      reference.textView.textStorage?.setAttributedString(view.layout.storage)
-      reference.textView.setSelectedRange(caret(0))
-      return reference
-    }
-
     @Test(arguments: [false, true])
     func 折り返し行末から選んで編集し一度で取り消せる(replacing: Bool) throws {
       let text = String(repeating: "word ", count: 40) + "\nnext"
       let view = makeEditor(text: text, width: 200)
-      let reference = wrappedReference(for: view)
-      defer { reference.close() }
-      let first = view.layout.lineRange(containing: 0)
+      let first = try #require(view.layout.visualLines().first).range
       try #require(first.length > 0 && first.length < 200)
       view.moveToEndOfLine(nil)
-      reference.textView.moveToEndOfLine(nil)
-      #expect(view.selectedRange() == reference.textView.selectedRange())
+      #expect(view.selectedRange() == caret(NSMaxRange(first)))
+      // 折り返し位置のキャレットは次の行の先頭と同じ位置にあるが、行末へ移った後は前の行に属する。
       view.selectLine(nil)
-      reference.textView.selectLine(nil)
       #expect(view.selectedRange() == first)
-      #expect(view.selectedRange() == reference.textView.selectedRange())
       if replacing {
         view.insertText("X", replacementRange: caret(NSNotFound))
-        reference.textView.insertText("X", replacementRange: caret(NSNotFound))
       } else {
         view.deleteBackward(nil)
-        reference.textView.deleteBackward(nil)
       }
-      #expect(view.text == reference.textView.string)
-      #expect(view.selectedRange() == reference.textView.selectedRange())
-      reference.textView.breakUndoCoalescing()
+      let rest = (text as NSString).substring(from: NSMaxRange(first))
+      #expect(view.text == (replacing ? "X" : "") + rest)
+      #expect(view.selectedRange() == caret(replacing ? 1 : 0))
       view.undo(nil)
-      reference.textView.undoManager?.undo()
       #expect(view.text == text)
-      #expect(reference.textView.string == text)
     }
 
-    @Test(arguments: ["select", "moveRight:", "moveToBeginningOfDocument:", "moveToEndOfLine:"])
-    func 行末側の選択は次の選択や移動に従う(operation: String) {
+    /// 行末へ移った直後のキャレットは前の行に属する。同じ位置を選び直したり別の位置へ動いたり
+    /// すると、その位置を先頭とする行に属する。
+    @Test(arguments: [
+      ("select", 1), ("moveRight:", 1), ("moveToBeginningOfDocument:", 0), ("moveToEndOfLine:", 0),
+    ])
+    func 行末側の選択は次の選択や移動に従う(operation: String, line: Int) throws {
       let view = makeEditor(text: String(repeating: "word ", count: 40), width: 200)
-      let reference = wrappedReference(for: view)
-      defer { reference.close() }
+      let lines = view.layout.visualLines()
+      try #require(lines.count > 2)
       view.moveToEndOfLine(nil)
-      reference.textView.moveToEndOfLine(nil)
+      try #require(view.selectedRange() == caret(NSMaxRange(lines[0].range)))
       if operation == "select" {
         view.select([view.selectedRange()], primary: 0)
-        reference.textView.setSelectedRange(
-          reference.textView.selectedRange(), affinity: .downstream, stillSelecting: false)
       } else {
         view.doCommand(by: NSSelectorFromString(operation))
-        reference.textView.doCommand(by: NSSelectorFromString(operation))
       }
       view.selectLine(nil)
-      reference.textView.selectLine(nil)
-      #expect(view.text == reference.textView.string)
-      #expect(view.selectedRange() == reference.textView.selectedRange())
+      #expect(view.selectedRange() == lines[line].range)
     }
 
     @Test func 折り返し行末の選択は複数のキャレットそれぞれの行を選ぶ() throws {
@@ -813,20 +881,19 @@ extension AppKitTests {
       #expect(view.session.primaryIndex == 1)
     }
 
+    /// 行末側にあることは行の選択にだけ効き、行末までの削除は次の行の先頭にあるキャレットと
+    /// 同じく次の行を消す。
     @Test(arguments: ["word ", "😀", "a\u{301}"])
     func 折り返し行末の状態は既存の削除範囲を変えない(unit: String) throws {
       let text = String(repeating: unit, count: 40)
       let view = makeEditor(text: text, width: 200)
-      let ordinary = makeEditor(text: text, width: 200)
+      let lines = view.layout.visualLines()
+      try #require(lines.count > 1)
       view.moveToEndOfLine(nil)
-      // 文書の末尾まで折り返さずに届くと、どちらも何も消さずに通ってしまう。
-      try #require(view.selectedRange().location < (text as NSString).length)
-      ordinary.select([view.selectedRange()], primary: 0)
+      try #require(view.selectedRange() == caret(lines[1].range.location))
       view.deleteToEndOfLine(nil)
-      ordinary.deleteToEndOfLine(nil)
-      #expect(view.text == ordinary.text)
-      #expect(view.selectedRange() == ordinary.selectedRange())
-      #expect(view.text.hasSuffix(unit))
+      #expect(view.text == (text as NSString).replacingCharacters(in: lines[1].range, with: ""))
+      #expect(view.selectedRange() == caret(lines[1].range.location))
       view.undo(nil)
       #expect(view.text == text)
     }
