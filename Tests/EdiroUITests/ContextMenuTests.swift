@@ -1,5 +1,4 @@
 import AppKit
-import ObjectiveC
 import Testing
 
 @testable import EdiroUI
@@ -7,16 +6,38 @@ import Testing
 /// 呼び出し側が受け取らなかったウィンドウとコントローラもテストの間は生かしておく。
 private var retainedEditors: [(NSWindow, EditorTextController)] = []
 
-/// 本文と選択から始めて、`location` の文字の上で右クリックする場面。
+/// 本文と選択から始めて、`location` の文字の上で右クリックする場面と、その結果。
 nonisolated struct ContextMenuScenario: CustomTestStringConvertible, Sendable {
+  enum Transformation: String, Sendable {
+    case upper = "uppercaseWord:", lower = "lowercaseWord:", capitalize = "capitalizeWord:"
+    case fullWidth = "convertToFullWidth:", halfWidth = "convertToHalfWidth:"
+    case traditional = "convertToTraditionalChinese:", simplified = "convertToSimplifiedChinese:"
+
+    static let cased: [Self] = [.upper, .lower, .capitalize]
+  }
+
   let text: String
   let selection: NSRange
   let click: Int
+  /// 右クリックの後の選択。
+  let selects: NSRange
+  /// 調べると翻訳の題名に入る文字。調べる対象が無ければ nil。
+  let lookUp: String?
+  let shares: Bool
+  /// 変換のサブメニューの項目。全角・半角は、優先する言語に日本語があるときの並び。
+  let transformations: [Transformation]
 
-  init(_ text: String, _ location: Int, _ length: Int, click: Int) {
+  init(
+    _ text: String, _ location: Int, _ length: Int, click: Int, selects: Int, _ selectedLength: Int,
+    lookUp: String?, shares: Bool = true, _ transformations: [Transformation]
+  ) {
     self.text = text
     self.selection = NSRange(location: location, length: length)
     self.click = click
+    self.selects = NSRange(location: selects, length: selectedLength)
+    self.lookUp = lookUp
+    self.shares = shares
+    self.transformations = transformations
   }
 
   var testDescription: String { "\(text.debugDescription) \(selection) click=\(click)" }
@@ -60,254 +81,316 @@ extension AppKitTests {
           clickCount: 1, pressure: 1))
     }
 
-    // MARK: - 参照 NSTextView との差分
-
-    nonisolated static let menuScenarios: [ContextMenuScenario] = [
-      // 選択の上と、選択やキャレットに接しない単語の上
-      .init("This is a word.", 0, 4, click: 1),
-      .init("This is a word.", 0, 4, click: 11),
-      .init("This is a word.", 3, 3, click: 1),
-      .init("This is a word.", 0, 7, click: 5),
-      // 選択の端に接する空白の上では選択を変えず、調べる対象は無い。
-      .init("This is a word.", 0, 7, click: 7),
-      // キャレットに接する文字の上では選択を変えない。
-      .init("This is a word.", 2, 0, click: 1),
-      .init("hello world", 2, 0, click: 2),
-      .init("hello world", 1, 0, click: 2),
-      .init("hello world", 11, 0, click: 9),
-      .init("This is a word.", 4, 0, click: 4),
-      // 空白と句読点の上: 選ぶが、調べる・共有の対象にしない。
-      .init("This is a word.", 0, 0, click: 4),
-      .init("This is a word.", 0, 0, click: 14),
-      .init("a, b", 0, 0, click: 1),
-      .init("a, b", 1, 1, click: 1),
-      .init("a b", 1, 1, click: 1),
-      .init(", ,", 1, 0, click: 1),
-      .init(", ,", 0, 3, click: 1),
-      // 題名: 改行は空白に、30 文字を超える分は省く。
-      .init("ab cd\nef gh", 0, 8, click: 1),
-      .init("This is a much longer sentence that goes on.", 0, 44, click: 1),
-      .init("This is a much longer sentence that goes on.", 0, 31, click: 1),
-      .init("  leading and trailing  x", 0, 24, click: 3),
-      // 題名は UTF-16 で 30 を超える分を省く。
-      .init(String(repeating: "😀", count: 20) + " xyz", 0, 44, click: 0),
-      // 複数の符号単位からなる文字の直後のキャレットは、その文字に接しない。
-      .init("😀 foo", 2, 0, click: 0),
-      .init("e\u{301} foo", 2, 0, click: 0),
-      // 変換のサブメニューの出し分け。全角・半角は優先する言語に日本語があるときだけ出るので、
-      // そうでない環境では出さない側を比べる。
-      .init("全角ＡＢＣ　テスト です", 0, 0, click: 7),
-      .init("全角ＡＢＣ　テスト です", 0, 5, click: 1),
-      .init("ｱｲｳ zz", 0, 3, click: 1),
-      .init("abc テスト zz", 0, 7, click: 1),
-      .init("漢字 zz", 0, 2, click: 0),
-      .init("汉字 zz", 0, 2, click: 0),
-      .init("! zz", 0, 1, click: 0),
-      .init("日本 zz", 0, 2, click: 0),
-      // 誤りの単語の上。候補、Ignore Spelling、Learn Spelling も比べる。
-      .init("This is a mispeled word.", 0, 0, click: 12),
-    ]
-
-    /// 比べる項目の内容。
-    private struct Item: Equatable, CustomStringConvertible {
-      var title: String
-      var action: String?
-      var tag: Int?
-      var enabled: Bool?
-      var state: NSControl.StateValue
-      var alternate: Bool
-      var key: String?
-      var submenu: [Item]?
-
-      var description: String {
-        var fields = [title]
-        if let action { fields.append(action) }
-        if let tag { fields.append("tag=\(tag)") }
-        if enabled == false { fields.append("disabled") }
-        if state == .on { fields.append("on") }
-        if alternate { fields.append("alternate") }
-        if let key { fields.append("key=\(key)") }
-        let head = fields.joined(separator: " | ")
-        guard let submenu else { return head }
-        return head + " [" + submenu.map(\.description).joined(separator: ", ") + "]"
-      }
-
-      static let separator = Item(
-        title: "---", enabled: false, state: .off, alternate: false)
-    }
-
-    /// 参照 NSTextView が private の action で出す項目のうち、このエディタが公開 API で代わりに
-    /// するもの。action はこのエディタのものと比べず、同じ名前に寄せる。
-    private static let substitutedActions: [String: String] = [
-      "_rvMenuItemAction": "lookUp", "lookUpFromMenu:": "lookUp", "translateFromMenu:": "lookUp",
-    ]
-
-    /// 比べる対象から外す項目。Search With Google と Report a Concern は、NSTextView が
-    /// private の action で出し、代わりの公開 API が無いので、このエディタは出さない。
-    private static let excludedActions: Set<String> = [
-      "_searchWithGoogleFromMenu:", "_invokeProofreadingFeedbackReportConcern:",
-    ]
-
-    /// 比べる対象から外すサブメニュー。そのサブメニューが含む action で見分ける。縦書き
-    /// (Layout Orientation) は扱わない。
-    private static let excludedSubmenuActions: Set<String> = ["changeLayoutOrientation:"]
-
-    /// 有効かどうかを比べない項目。NSTextView は Writing Tools の項目に自分で応答するが、この
-    /// ビューは応答せず、応答連鎖の先の NSApplication が応答する。テストのプロセスでは
-    /// NSApplication はこの項目を無効にする (参照 NSTextView を第一応答者にしても無効) ので比べない。
-    private static let enabledElsewhere: Set<String> = ["showWritingTools:"]
-
-    private func isExcluded(_ item: NSMenuItem) -> Bool {
-      if let action = item.action, Self.excludedActions.contains(NSStringFromSelector(action)) {
-        return true
-      }
-      return item.submenu?.items.contains {
-        $0.action.map { Self.excludedSubmenuActions.contains(NSStringFromSelector($0)) } == true
-      } == true
-    }
-
-    /// AppKit が表示の前に行う検証と同じ手順で、項目が有効かを求める。
-    private func isEnabled(_ item: NSMenuItem, in view: NSView) -> Bool {
-      guard let action = item.action else { return item.isEnabled }
-      if item.submenu != nil { return true }
-      let target = item.target ?? (view.responds(to: action) ? view : nil)
-      guard let object = target as? NSObject else { return false }
-      let validation = #selector(NSMenuItemValidation.validateMenuItem(_:))
-      if object.responds(to: validation) {
-        typealias Validate = @convention(c) (NSObject, Selector, NSMenuItem) -> ObjCBool
-        let validate = unsafeBitCast(object.method(for: validation), to: Validate.self)
-        return validate(object, validation, item).boolValue
-      }
-      if let validator = object as? NSUserInterfaceValidations {
-        return validator.validateUserInterfaceItem(item)
-      }
-      return item.isEnabled
-    }
-
-    /// 区切りの連続と前後の区切りは、表示で見分けられないので一つにまとめて比べる。
-    private func describe(_ menu: NSMenu, in view: NSView) -> [Item] {
-      // 項目を開く直前に埋めるメニューも、埋めてから比べる。
-      menu.delegate?.menuNeedsUpdate?(menu)
-      var items: [Item] = []
-      for item in menu.items where !isExcluded(item) {
-        if item.isSeparatorItem {
-          if let last = items.last, last != .separator { items.append(.separator) }
-          continue
-        }
-        let action = item.action.map(NSStringFromSelector)
-        let substituted = action.flatMap { Self.substitutedActions[$0] }
-        items.append(
-          Item(
-            title: item.title, action: substituted ?? action,
-            tag: substituted == nil ? item.tag : nil,
-            enabled: action.map(Self.enabledElsewhere.contains) == true
-              ? nil : isEnabled(item, in: view),
-            state: item.state, alternate: item.isAlternate,
-            key: item.isAlternate || !item.keyEquivalent.isEmpty
-              ? "\(item.keyEquivalent.debugDescription) \(item.keyEquivalentModifierMask.rawValue)"
-              : nil,
-            submenu: item.submenu.map { describe($0, in: view) }))
-      }
-      if items.last == .separator { items.removeLast() }
-      return items
-    }
-
-    @Test(arguments: menuScenarios)
-    func 右クリックメニューの項目とクリック後の選択が参照と同じになる(scenario: ContextMenuScenario) throws {
-      let reference = ReferenceTextView(text: scenario.text)
-      defer { reference.close() }
-      reference.textView.setSelectedRange(scenario.selection)
-      let click = try #require(reference.rightMouseDown(at: scenario.click))
-      let referenceMenu = try #require(reference.textView.menu(for: click))
-      let expected = describe(referenceMenu, in: reference.textView)
-
-      let (window, view) = makeEditor(text: scenario.text)
-      defer { window.close() }
-      view.select([scenario.selection], primary: 0)
-      let menu = try #require(view.menu(for: try mouseEvent(.rightMouseDown, at: scenario.click, in: view)))
-      #expect(describe(menu, in: view) == expected)
-      #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
-    }
-
-    @Test func 空の本文の右クリックメニューも参照と同じになる() throws {
-      let reference = ReferenceTextView(text: "")
-      defer { reference.close() }
-      let point = NSPoint(x: 100, y: 250)
-      func event(_ window: NSWindow) throws -> NSEvent {
-        try #require(
-          NSEvent.mouseEvent(
-            with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0,
-            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
-            pressure: 1))
-      }
-      let referenceMenu = try #require(reference.textView.menu(for: try event(reference.window)))
-      let (window, view) = makeEditor(text: "")
-      defer { window.close() }
-      let menu = try #require(view.menu(for: try event(window)))
-      #expect(describe(menu, in: view) == describe(referenceMenu, in: reference.textView))
-    }
-
-    /// 文字の無い所を押す場面。`line` の文字がある表示上の行の高さで、横は行の右か左の端。
-    nonisolated struct PointScenario: CustomTestStringConvertible, Sendable {
-      enum Side: Sendable { case right, left, above, below }
-      let line: Int
-      let side: Side
-      var testDescription: String { "line of \(line) \(side)" }
-    }
-
-    nonisolated static let pointText = "hello\nworld wide\n\nlast"
-    nonisolated static let pointScenarios: [PointScenario] = [
-      .init(line: 0, side: .right), .init(line: 0, side: .left), .init(line: 6, side: .right),
-      .init(line: 6, side: .left), .init(line: 17, side: .right), .init(line: 18, side: .right),
-      .init(line: 18, side: .left), .init(line: 18, side: .below), .init(line: 0, side: .above),
-    ]
-
-    /// ウィンドウの座標で、行の高さ `y` の右か左の端、または本文の下を押すイベント。
-    private func event(
-      _ scenario: PointScenario, lineY: CGFloat, window: NSWindow, below: CGFloat, above: CGFloat
-    )
-      throws -> NSEvent
-    {
-      let point =
-        switch scenario.side {
-        case .right: NSPoint(x: 300, y: lineY)
-        case .left: NSPoint(x: 3, y: lineY)
-        case .below: NSPoint(x: 100, y: below)
-        case .above: NSPoint(x: 100, y: above)
-        }
-      return try #require(
+    /// ウィンドウ座標の `point` を右クリックするイベント。
+    private func rightMouseDown(at point: NSPoint, in window: NSWindow) throws -> NSEvent {
+      try #require(
         NSEvent.mouseEvent(
           with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0,
           windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
           pressure: 1))
     }
 
-    @Test(arguments: pointScenarios)
-    func 文字の無い所の右クリックも参照と同じ選択とメニューになる(scenario: PointScenario) throws {
-      let reference = ReferenceTextView(text: Self.pointText)
-      defer { reference.close() }
-      reference.textView.setSelectedRange(NSRange(location: 2, length: 0))
-      let screen = reference.textView.firstRect(
-        forCharacterRange: NSRange(location: scenario.line, length: 1), actualRange: nil)
-      let referenceY = reference.window.convertPoint(fromScreen: NSPoint(x: screen.midX, y: screen.midY)).y
-      let referenceMenu = try #require(
-        reference.textView.menu(
-          for: try event(
-            scenario, lineY: referenceY, window: reference.window, below: 20,
-            above: reference.textView.convert(NSPoint(x: 0, y: 3), to: nil).y)))
+    // MARK: - 右クリックメニューの並び
 
-      let (window, view) = makeEditor(text: Self.pointText)
+    /// 優先する言語に日本語があるか。全角・半角の変換は、このときだけ出す (NSTextView と同じ)。
+    private static var prefersJapanese: Bool {
+      Locale.preferredLanguages.contains { Locale(identifier: $0).language.languageCode == .japanese }
+    }
+
+    /// 項目を、AppKit の翻訳で変わらない値で一行ずつ表す。サブメニューは `submenu` の行の後に
+    /// 字下げして並べる。題名は、このビューが組み立てる調べると翻訳の項目だけ入れる。共有の
+    /// 項目は AppKit の共有の項目と同じ action なので `share` と書く。このビューが宛先の項目は、
+    /// 無効なら `disabled` を付ける。ペーストの有効・無効は汎用のペーストボードで変わるので見ない。
+    private func outline(_ menu: NSMenu, in view: EditorView, depth: Int = 0) -> [String] {
+      let indent = String(repeating: "  ", count: depth)
+      let share = NSSharingServicePicker(items: [""]).standardShareMenuItem.action
+      let titled = [#selector(EditorView.lookUpFromMenu(_:)), #selector(EditorView.translateFromMenu(_:))]
+      let paste = [#selector(EditorView.paste(_:)), #selector(EditorView.pasteAsPlainText(_:))]
+      return menu.items.flatMap { item -> [String] in
+        if item.isSeparatorItem { return [indent + "---"] }
+        if let submenu = item.submenu {
+          return [indent + "submenu"] + outline(submenu, in: view, depth: depth + 1)
+        }
+        guard let action = item.action else { return [indent + "no action"] }
+        if action == share { return [indent + "share"] }
+        // 検証はチェック印を付け直すので、状態を読む前に行う。
+        let disabled =
+          item.target === view && !paste.contains(action) && !view.validateUserInterfaceItem(item)
+        var fields = [NSStringFromSelector(action)]
+        if titled.contains(action) { fields.append(item.title) }
+        if item.tag != 0 { fields.append("tag=\(item.tag)") }
+        if item.state == .on { fields.append("on") }
+        if item.isAlternate { fields.append("alternate") }
+        if item.isAlternate || !item.keyEquivalent.isEmpty {
+          let mask = item.keyEquivalentModifierMask
+          let modifiers: [(NSEvent.ModifierFlags, String)] = [
+            (.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘"),
+          ]
+          fields.append(modifiers.filter { mask.contains($0.0) }.map(\.1).joined() + item.keyEquivalent)
+        }
+        if disabled { fields.append("disabled") }
+        return [indent + fields.joined(separator: " ")]
+      }
+    }
+
+    /// Writing Tools が使えるときだけ、Show Writing Tools、Proofread、Rewrite の 3 項目と区切り。
+    /// 有効かどうかは応答連鎖の先の NSApplication が決めるので見ない。
+    private var writingToolsLines: [String] {
+      guard NSWritingToolsCoordinator.isWritingToolsAvailable else { return [] }
+      return ["showWritingTools:", "showWritingTools: tag=1", "showWritingTools: tag=2", "---"]
+    }
+
+    /// スペルと文法のサブメニュー。自動のスペル修正の既定はシステム設定に従う。
+    private var spellingLines: [String] {
+      let correction = NSSpellChecker.isAutomaticSpellingCorrectionEnabled ? " on" : ""
+      return [
+        "submenu", "  showGuessPanel:", "  checkSpelling:", "  ---", "  toggleContinuousSpellChecking:",
+        "  toggleGrammarChecking: on", "  toggleAutomaticSpellingCorrection:" + correction,
+      ]
+    }
+
+    /// 置換のサブメニュー。選択があるときだけ、選択の中を置き換える項目を先頭に出す。
+    private func substitutionLines(selection: Bool) -> [String] {
+      let replacing =
+        selection
+        ? ["  replaceQuotesInSelection:", "  replaceDashesInSelection:", "  replaceTextInSelection:", "  ---"]
+        : []
+      return ["submenu"] + replacing + [
+        "  orderFrontSubstitutionsPanel:", "  ---", "  toggleSmartInsertDelete: on",
+        "  toggleAutomaticQuoteSubstitution:", "  toggleAutomaticDashSubstitution:",
+        "  toggleAutomaticLinkDetection:", "  toggleAutomaticDataDetection:",
+        "  toggleAutomaticTextReplacement:",
+      ]
+    }
+
+    @Test func 右クリックメニューは調べると編集と共有とWritingToolsとスペルと置換と変換と読み上げを並べる() throws {
+      let (window, view) = makeEditor(text: "This is a word.")
       defer { window.close() }
-      view.select([caret(2)], primary: 0)
-      let rect = try #require(
+      view.select([NSRange(location: 0, length: 4)], primary: 0)
+      let menu = try #require(view.menu(for: try mouseEvent(.rightMouseDown, at: 1, in: view)))
+      let widths = Self.prefersJapanese ? ["  convertToFullWidth:"] : []
+      let expected =
+        [
+          "lookUpFromMenu: Look Up “This”", "translateFromMenu: Translate “This”", "---",
+          "cut:", "copy:", "paste:", "pasteAsPlainText: alternate ⌥⇧", "---",
+          "share", "---",
+        ] + writingToolsLines + spellingLines + substitutionLines(selection: true)
+        + ["submenu", "  uppercaseWord:", "  lowercaseWord:", "  capitalizeWord:"] + widths
+        + ["submenu", "  startSpeaking:", "  stopSpeaking: disabled"]
+      #expect(outline(menu, in: view) == expected)
+    }
+
+    @Test func 空の本文の右クリックメニューは調べると共有と変換を出さない() throws {
+      let (window, view) = makeEditor(text: "")
+      defer { window.close() }
+      let menu = try #require(view.menu(for: try rightMouseDown(at: NSPoint(x: 100, y: 250), in: window)))
+      let expected =
+        ["cut: disabled", "copy: disabled", "paste:", "pasteAsPlainText: alternate ⌥⇧", "---"]
+        + writingToolsLines + spellingLines + substitutionLines(selection: false)
+        + ["submenu", "  startSpeaking: disabled", "  stopSpeaking: disabled"]
+      #expect(outline(menu, in: view) == expected)
+      #expect(ranges(view) == [caret(0)])
+    }
+
+    // MARK: - 場面ごとの出し分け
+
+    nonisolated static let menuScenarios: [ContextMenuScenario] = {
+      let cased = ContextMenuScenario.Transformation.cased
+      return [
+        // 選択の上では選択を変えず、選択に接しない単語の上ではその単語を選ぶ。
+        .init("This is a word.", 0, 4, click: 1, selects: 0, 4, lookUp: "This", cased + [.fullWidth]),
+        .init("This is a word.", 0, 4, click: 11, selects: 10, 4, lookUp: "word", cased + [.fullWidth]),
+        .init("This is a word.", 3, 3, click: 1, selects: 0, 4, lookUp: "This", cased + [.fullWidth]),
+        .init("This is a word.", 0, 7, click: 5, selects: 0, 7, lookUp: "This is", cased + [.fullWidth]),
+        // 選択の端に接する空白の上では選択を変えず、調べる対象は無い。
+        .init("This is a word.", 0, 7, click: 7, selects: 0, 7, lookUp: nil, cased + [.fullWidth]),
+        // キャレットの前後の文字の上では選択を変えない。それ以外の文字の上ではその単語を選ぶ。
+        .init("This is a word.", 2, 0, click: 1, selects: 2, 0, lookUp: "This", []),
+        .init("hello world", 2, 0, click: 2, selects: 2, 0, lookUp: "hello", []),
+        .init("hello world", 1, 0, click: 2, selects: 0, 5, lookUp: "hello", cased + [.fullWidth]),
+        .init("hello world", 11, 0, click: 9, selects: 6, 5, lookUp: "world", cased + [.fullWidth]),
+        .init("This is a word.", 4, 0, click: 4, selects: 4, 0, lookUp: nil, []),
+        // 空白と句読点の上: 選ぶが、共有の対象にしない。クリックした単語としては調べないが、
+        // クリックした文字を含む選択は、空白だけでなければ句読点だけでも調べる対象にする。
+        .init("This is a word.", 0, 0, click: 4, selects: 4, 1, lookUp: nil, shares: false, [.fullWidth]),
+        .init("This is a word.", 0, 0, click: 14, selects: 14, 1, lookUp: nil, shares: false, [.fullWidth]),
+        .init("a, b", 0, 0, click: 1, selects: 1, 1, lookUp: nil, shares: false, [.fullWidth]),
+        .init("a, b", 1, 1, click: 1, selects: 1, 1, lookUp: ",", shares: false, [.fullWidth]),
+        .init("a b", 1, 1, click: 1, selects: 1, 1, lookUp: nil, shares: false, [.fullWidth]),
+        .init(", ,", 1, 0, click: 1, selects: 1, 0, lookUp: nil, shares: false, []),
+        .init(", ,", 0, 3, click: 1, selects: 0, 3, lookUp: ", ,", shares: false, [.fullWidth]),
+        // 題名: 前後の空白を除き、改行は空白に、UTF-16 で 30 を超える分は省く。
+        .init("ab cd\nef gh", 0, 8, click: 1, selects: 0, 8, lookUp: "ab cd ef", cased + [.fullWidth]),
+        .init(
+          "This is a much longer sentence that goes on.", 0, 44, click: 1, selects: 0, 44,
+          lookUp: "This is a much longer sentence…", cased + [.fullWidth]),
+        .init(
+          "This is a much longer sentence that goes on.", 0, 31, click: 1, selects: 0, 31,
+          lookUp: "This is a much longer sentence", cased + [.fullWidth]),
+        .init(
+          "  leading and trailing  x", 0, 24, click: 3, selects: 0, 24, lookUp: "leading and trailing",
+          cased + [.fullWidth]),
+        .init(
+          String(repeating: "😀", count: 20) + " xyz", 0, 44, click: 0, selects: 0, 44,
+          lookUp: String(repeating: "😀", count: 15) + "…", cased + [.fullWidth]),
+        // 複数の符号単位からなる文字の直後のキャレットは、その文字に接しない。絵文字は文字でも
+        // 数字でもないので、クリックした単語としては調べない。
+        .init("😀 foo", 2, 0, click: 0, selects: 0, 2, lookUp: nil, []),
+        .init("e\u{301} foo", 2, 0, click: 0, selects: 0, 2, lookUp: "e\u{301}", cased + [.fullWidth]),
+        // 変換は、大文字と小文字の区別がある文字を含むときと、その変換で文字が変わるときだけ出す。
+        .init("全角ＡＢＣ　テスト です", 0, 0, click: 7, selects: 6, 3, lookUp: "テスト", [.halfWidth]),
+        .init("全角ＡＢＣ　テスト です", 0, 5, click: 1, selects: 0, 5, lookUp: "全角ＡＢＣ", cased + [.halfWidth]),
+        .init("ｱｲｳ zz", 0, 3, click: 1, selects: 0, 3, lookUp: "ｱｲｳ", [.fullWidth]),
+        .init(
+          "abc テスト zz", 0, 7, click: 1, selects: 0, 7, lookUp: "abc テスト",
+          cased + [.fullWidth, .halfWidth]),
+        .init("漢字 zz", 0, 2, click: 0, selects: 0, 2, lookUp: "漢字", [.simplified]),
+        .init("汉字 zz", 0, 2, click: 0, selects: 0, 2, lookUp: "汉字", [.traditional]),
+        .init("! zz", 0, 1, click: 0, selects: 0, 1, lookUp: "!", shares: false, [.fullWidth]),
+        .init("日本 zz", 0, 2, click: 0, selects: 0, 2, lookUp: "日本", []),
+        // 誤りの単語の上でも、選択と調べる対象はほかの単語と同じ。候補、Ignore Spelling、
+        // Learn Spelling の項目は TextCheckingTests で確かめる。
+        .init(
+          "This is a mispeled word.", 0, 0, click: 12, selects: 10, 8, lookUp: "mispeled",
+          cased + [.fullWidth]),
+      ]
+    }()
+
+    private func item(_ menu: NSMenu, _ action: Selector) -> NSMenuItem? {
+      for item in menu.items {
+        if item.action == action { return item }
+        if let submenu = item.submenu, let found = self.item(submenu, action) { return found }
+      }
+      return nil
+    }
+
+    /// 調べると翻訳の項目の題名。
+    private func lookUpTitles(_ menu: NSMenu) -> [String] {
+      let actions = [#selector(EditorView.lookUpFromMenu(_:)), #selector(EditorView.translateFromMenu(_:))]
+      return menu.items.filter { $0.action.map(actions.contains) == true }.map(\.title)
+    }
+
+    private func expectedLookUpTitles(_ text: String?) -> [String] {
+      text.map { ["Look Up “\($0)”", "Translate “\($0)”"] } ?? []
+    }
+
+    private func hasShareItem(_ menu: NSMenu) -> Bool {
+      let share = NSSharingServicePicker(items: [""]).standardShareMenuItem.action
+      return menu.items.contains { $0.action == share }
+    }
+
+    /// 変換のサブメニューの項目の action。サブメニューが無ければ空。
+    private func transformations(_ menu: NSMenu) -> [String] {
+      let all: Set<String> = [
+        "uppercaseWord:", "lowercaseWord:", "capitalizeWord:", "convertToFullWidth:", "convertToHalfWidth:",
+        "convertToTraditionalChinese:", "convertToSimplifiedChinese:",
+      ]
+      let submenu = menu.items.compactMap(\.submenu).first { submenu in
+        submenu.items.contains { $0.action.map { all.contains(NSStringFromSelector($0)) } == true }
+      }
+      return submenu?.items.compactMap { $0.action.map(NSStringFromSelector) } ?? []
+    }
+
+    @Test(arguments: menuScenarios)
+    func 右クリックした場面で選択と調べる対象と共有と変換が決まる(scenario: ContextMenuScenario) throws {
+      let (window, view) = makeEditor(text: scenario.text)
+      defer { window.close() }
+      view.select([scenario.selection], primary: 0)
+      let menu = try #require(view.menu(for: try mouseEvent(.rightMouseDown, at: scenario.click, in: view)))
+      #expect(ranges(view) == [scenario.selects])
+      #expect(lookUpTitles(menu) == expectedLookUpTitles(scenario.lookUp))
+      #expect(hasShareItem(menu) == scenario.shares)
+      let widths: Set<ContextMenuScenario.Transformation> = [.fullWidth, .halfWidth]
+      let expected = scenario.transformations.filter { Self.prefersJapanese || !widths.contains($0) }
+      #expect(transformations(menu) == expected.map(\.rawValue))
+      // 選択の中を置き換える項目は、選択があるときだけ出す。
+      let replacing = item(menu, #selector(EditorView.replaceQuotesInSelection(_:))) != nil
+      #expect(replacing == (scenario.selects.length > 0))
+    }
+
+    /// 文字の無い所を押す場面と、その結果。`line` の文字がある表示上の行の高さで、横は行の右か
+    /// 左の端。上と下は本文の外の余白。
+    nonisolated struct PointScenario: CustomTestStringConvertible, Sendable {
+      enum Side: Sendable { case right, left, above, below }
+      let line: Int
+      let side: Side
+      /// 右クリックの後の選択。
+      let selects: NSRange
+      /// 調べると翻訳の題名に入る文字。調べる対象が無ければ nil。
+      let lookUp: String?
+
+      init(line: Int, side: Side, selects: Int, _ length: Int, lookUp: String?) {
+        self.line = line
+        self.side = side
+        self.selects = NSRange(location: selects, length: length)
+        self.lookUp = lookUp
+      }
+
+      var testDescription: String { "line of \(line) \(side)" }
+    }
+
+    /// `pointText` の 2 の位置のキャレットから始める。
+    nonisolated static let pointText = "hello\nworld wide\n\nlast"
+    nonisolated static let pointScenarios: [PointScenario] = [
+      // 行の右の余白は、その行の改行に掛かる。改行で終わらない最後の行の右はどの文字でもないので、
+      // 選択を変えず、調べない。
+      .init(line: 0, side: .right, selects: 5, 1, lookUp: nil),
+      .init(line: 6, side: .right, selects: 16, 1, lookUp: nil),
+      .init(line: 17, side: .right, selects: 17, 1, lookUp: nil),
+      .init(line: 18, side: .right, selects: 2, 0, lookUp: nil),
+      // 行の左の余白は、その行の最初の文字に掛かる。
+      .init(line: 0, side: .left, selects: 0, 5, lookUp: "hello"),
+      .init(line: 6, side: .left, selects: 6, 5, lookUp: "world"),
+      .init(line: 18, side: .left, selects: 18, 4, lookUp: "last"),
+      // どの行の高さでもない本文の下と上の余白は、最後の文字に掛かる (NSTextView と同じ)。
+      .init(line: 18, side: .below, selects: 18, 4, lookUp: "last"),
+      .init(line: 0, side: .above, selects: 18, 4, lookUp: "last"),
+    ]
+
+    /// `text` の `location` にキャレットを置き、文字の無い所を右クリックしたメニュー。
+    private func rightClick(
+      _ scenario: PointScenario, text: String, caret location: Int
+    ) throws -> (NSWindow, EditorView, NSMenu) {
+      let (window, view) = makeEditor(text: text)
+      view.select([caret(location)], primary: 0)
+      // 改行で終わる本文の後ろの空の行には文字が無いので、キャレットの矩形で高さを求める。
+      let rect =
         view.layout.selectionRects(NSRange(location: scenario.line, length: 1)).first
-          ?? Optional(view.layout.caretRect(at: scenario.line)))
-      let y = view.convert(NSPoint(x: 0, y: rect.midY + view.textOrigin.y), to: nil).y
-      let above = view.convert(NSPoint(x: 0, y: 3), to: nil).y
-      let menu = try #require(
-        view.menu(for: try event(scenario, lineY: y, window: window, below: 20, above: above)))
-      #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
-      #expect(describe(menu, in: view) == describe(referenceMenu, in: reference.textView))
+        ?? view.layout.caretRect(at: scenario.line)
+      let point =
+        switch scenario.side {
+        case .right: view.convert(NSPoint(x: 300, y: rect.midY + view.textOrigin.y), to: nil)
+        case .left: view.convert(NSPoint(x: 3, y: rect.midY + view.textOrigin.y), to: nil)
+        case .below: NSPoint(x: 100, y: 20)
+        case .above: view.convert(NSPoint(x: 100, y: 3), to: nil)
+        }
+      let menu = try #require(view.menu(for: try rightMouseDown(at: point, in: window)))
+      return (window, view, menu)
+    }
+
+    @Test(arguments: pointScenarios)
+    func 文字の無い所の右クリックは近い文字に掛かるか選択を変えない(scenario: PointScenario) throws {
+      let (window, view, menu) = try rightClick(scenario, text: Self.pointText, caret: 2)
+      defer { window.close() }
+      #expect(ranges(view) == [scenario.selects])
+      #expect(lookUpTitles(menu) == expectedLookUpTitles(scenario.lookUp))
+    }
+
+    /// `hello\nworld\n` の 1 の位置のキャレットから始める。
+    nonisolated static let trailingNewlineScenarios: [PointScenario] = [
+      // 最後の改行の右と本文の下は、最後の改行に掛かる。
+      .init(line: 6, side: .right, selects: 11, 1, lookUp: nil),
+      .init(line: 6, side: .below, selects: 11, 1, lookUp: nil),
+      // 改行で終わる本文の後ろの空の行はどの文字でもないので、選択を変えず、調べない。
+      .init(line: 12, side: .right, selects: 1, 0, lookUp: nil),
+    ]
+
+    @Test(arguments: trailingNewlineScenarios)
+    func 改行で終わる本文の後ろの右クリックは最後の改行に掛かるか選択を変えない(scenario: PointScenario) throws {
+      let (window, view, menu) = try rightClick(scenario, text: "hello\nworld\n", caret: 1)
+      defer { window.close() }
+      #expect(ranges(view) == [scenario.selects])
+      #expect(lookUpTitles(menu) == expectedLookUpTitles(scenario.lookUp))
     }
 
     @Test func 折り返した行の右と左の余白は押した行の端の文字に掛かる() throws {
@@ -330,31 +413,18 @@ extension AppKitTests {
       }
     }
 
-    @Test func 複数の選択では右クリックした選択があれば選択を変えない() throws {
-      let reference = ReferenceTextView(text: "one two three four")
-      defer { reference.close() }
+    @Test func 複数の選択では右クリックした選択があれば選択を変えず無ければその単語だけを選ぶ() throws {
       let (window, view) = makeEditor(text: "one two three four")
       defer { window.close() }
       let selections = [NSRange(location: 0, length: 3), NSRange(location: 8, length: 5)]
-      for click in [9, 15] {
-        reference.textView.selectedRanges = selections.map { NSValue(range: $0) }
-        let event = try #require(reference.rightMouseDown(at: click))
-        _ = reference.textView.menu(for: event)
+      for (click, expected) in [(9, selections), (15, [NSRange(location: 14, length: 4)])] {
         view.select(selections, primary: 0)
         _ = view.menu(for: try mouseEvent(.rightMouseDown, at: click, in: view))
-        #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
+        #expect(ranges(view) == expected, "click=\(click)")
       }
     }
 
     // MARK: - 自分で組み立てる項目
-
-    private func item(_ menu: NSMenu, _ action: Selector) -> NSMenuItem? {
-      for item in menu.items {
-        if item.action == action { return item }
-        if let submenu = item.submenu, let found = self.item(submenu, action) { return found }
-      }
-      return nil
-    }
 
     @Test func 調べると翻訳の項目はクリックした単語を対象にこのビューへ送る() throws {
       let (window, view) = makeEditor(text: "hello world")
@@ -393,9 +463,6 @@ extension AppKitTests {
         #expect(try view.validateUserInterfaceItem(#require(item(menu, action))))
       }
       #expect(item(menu, #selector(EditorView.uppercaseWord(_:)))?.target === view)
-      // 変換中は切り取れない。
-      view.setMarkedText("か", selectedRange: caret(1), replacementRange: caret(NSNotFound))
-      #expect(try !view.validateUserInterfaceItem(#require(item(menu, #selector(EditorView.cut(_:))))))
     }
 
     @Test func ほかの機能が足す項目を先頭と変換の前に置く() throws {
@@ -500,29 +567,25 @@ extension AppKitTests {
 
     // MARK: - サービス
 
-    @Test func サービスに応答する型と向きが参照と同じになる() {
-      let types: [NSPasteboard.PasteboardType?] = [
-        nil, .string, EditorView.legacyStringType, .rtf, .tiff, .fileURL,
+    @Test func サービスには旧来の名前の文字列の型でだけ応答し選択が無ければ受け取りだけに応答する() {
+      let legacy = EditorView.legacyStringType
+      let types: [NSPasteboard.PasteboardType?] = [nil, .string, legacy, .rtf, .tiff, .fileURL]
+      // nil はその向きの型を問わない問い合わせで、それにも応答する。
+      let cases: [(selection: NSRange, sends: [NSPasteboard.PasteboardType?])] = [
+        (caret(2), [nil]), (NSRange(location: 0, length: 5), [nil, legacy]),
       ]
-      for selection in [caret(2), NSRange(location: 0, length: 5)] {
-        let reference = ReferenceTextView(text: "hello world")
-        defer { reference.close() }
-        reference.textView.setSelectedRange(selection)
+      let returns: [NSPasteboard.PasteboardType?] = [nil, legacy]
+      for (selection, sends) in cases {
         let (window, view) = makeEditor(text: "hello world")
         defer { window.close() }
         view.select([selection], primary: 0)
         for send in types {
           for receive in types {
-            let expected = reference.textView.validRequestor(forSendType: send, returnType: receive)
-            let actual = view.validRequestor(forSendType: send, returnType: receive)
-            let expectsSelf = (expected as AnyObject?) === reference.textView
+            let requestor = view.validRequestor(forSendType: send, returnType: receive) as AnyObject?
+            let expected: AnyObject? = sends.contains(send) && returns.contains(receive) ? view : nil
             #expect(
-              ((actual as AnyObject?) === view) == expectsSelf,
-              "selection=\(selection) send=\(String(describing: send)) return=\(String(describing: receive))"
-            )
-            if !expectsSelf {
-              #expect((actual as AnyObject?) == nil)
-            }
+              requestor === expected,
+              "selection=\(selection) send=\(String(describing: send)) return=\(String(describing: receive))")
           }
         }
       }
@@ -611,15 +674,15 @@ extension AppKitTests {
       #expect(view.text == "ONE\n two three")
     }
 
-    @Test func 変換中は変換と調べると翻訳の項目を使えない() throws {
+    @Test func 変換中は切り取りと変換と調べると翻訳の項目を使えない() throws {
       let (window, view) = makeEditor(text: "hello")
       defer { window.close() }
       view.select([NSRange(location: 0, length: 5)], primary: 0)
       let menu = view.contextMenu(
         for: ContextMenuRequest(clickedIndex: nil, lookUpRange: NSRange(location: 0, length: 5)))
       let actions = [
-        #selector(EditorView.uppercaseWord(_:)), #selector(EditorView.lookUpFromMenu(_:)),
-        #selector(EditorView.translateFromMenu(_:)),
+        #selector(EditorView.cut(_:)), #selector(EditorView.uppercaseWord(_:)),
+        #selector(EditorView.lookUpFromMenu(_:)), #selector(EditorView.translateFromMenu(_:)),
       ]
       for action in actions { #expect(try view.validateUserInterfaceItem(#require(item(menu, action)))) }
       view.select([caret(5)], primary: 0)
@@ -695,31 +758,29 @@ extension AppKitTests {
     }
 
     @Test(arguments: [true, false], [true, false])
-    func サービスのスマートペーストは参照と同じ本文と選択になる(enabled: Bool, marked: Bool) {
-      for (text, selection) in [
-        ("hellofoo", caret(5)),
-        ("helloXfoo", NSRange(location: 5, length: 1)),
-        ("hello foo", caret(6)),
-        ("", caret(0)),
+    func サービスのスマートペーストは設定がオンで印のある文字列にだけ前後の空白を補う(enabled: Bool, marked: Bool) {
+      let smart = enabled && marked
+      let spaced = ("hello world foo", 12)
+      for (text, selection, (expected, after)) in [
+        ("hellofoo", caret(5), smart ? spaced : ("helloworldfoo", 10)),
+        ("helloXfoo", NSRange(location: 5, length: 1), smart ? spaced : ("helloworldfoo", 10)),
+        // 前に空白があれば、後ろにだけ補う。
+        ("hello foo", caret(6), smart ? spaced : ("hello worldfoo", 11)),
+        // 前後に文字が無ければ補わない。
+        ("", caret(0), ("world", 5)),
       ] {
-        let reference = ReferenceTextView(text: text)
-        defer { reference.close() }
         let (window, view) = makeEditor(text: text)
         defer { window.close() }
         let pasteboard = makePasteboard()
         defer { pasteboard.releaseGlobally() }
         pasteboard.setString("world", forType: .string)
         if marked { pasteboard.setString("", forType: EditorView.smartPasteType) }
-        reference.textView.smartInsertDeleteEnabled = enabled
         view.smartInsertDeleteEnabled = enabled
-        reference.textView.setSelectedRange(selection)
         view.select([selection], primary: 0)
 
-        let expectedAccepted = reference.textView.readSelection(from: pasteboard)
-        #expect(expectedAccepted)
-        #expect(view.readSelection(from: pasteboard) == expectedAccepted)
-        #expect(view.text == reference.textView.string)
-        #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
+        #expect(view.readSelection(from: pasteboard))
+        #expect(view.text == expected)
+        #expect(ranges(view) == [caret(after)])
         view.undo(nil)
         #expect(view.text == text)
         #expect(ranges(view) == [selection])
@@ -875,29 +936,6 @@ extension AppKitTests {
       #expect(view.lookUpRange(clickedIndex: 6) == NSRange(location: 5, length: 3))
     }
 
-    @Test(arguments: [PointScenario(line: 6, side: .right), PointScenario(line: 6, side: .below)])
-    func 改行で終わる本文の最後の行の右と本文の下の右クリックは参照と同じになる(scenario: PointScenario) throws {
-      let text = "hello\nworld\n"
-      let reference = ReferenceTextView(text: text)
-      defer { reference.close() }
-      reference.textView.setSelectedRange(NSRange(location: 1, length: 0))
-      let screen = reference.textView.firstRect(
-        forCharacterRange: NSRange(location: scenario.line, length: 1), actualRange: nil)
-      let referenceY = reference.window.convertPoint(fromScreen: NSPoint(x: screen.midX, y: screen.midY)).y
-      let referenceMenu = try #require(
-        reference.textView.menu(
-          for: try event(scenario, lineY: referenceY, window: reference.window, below: 20, above: 0)))
-      let (window, view) = makeEditor(text: text)
-      defer { window.close() }
-      view.select([caret(1)], primary: 0)
-      let rect = try #require(view.layout.selectionRects(NSRange(location: scenario.line, length: 1)).first)
-      let y = view.convert(NSPoint(x: 0, y: rect.midY + view.textOrigin.y), to: nil).y
-      let menu = try #require(
-        view.menu(for: try event(scenario, lineY: y, window: window, below: 20, above: 0)))
-      #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
-      #expect(describe(menu, in: view) == describe(referenceMenu, in: reference.textView))
-    }
-
     @Test func 翻訳を出したまま別の範囲を翻訳すると前の翻訳を閉じて出し直す() throws {
       let (window, view) = makeEditor(text: "hello world")
       defer { window.close() }
@@ -914,35 +952,6 @@ extension AppKitTests {
       let replace = try #require(view.translation.replace)
       replace("monde")
       #expect(view.text == "hello monde")
-    }
-
-    @Test func 改行で終わる本文の後ろの空の行の右クリックは参照と同じになる() throws {
-      let reference = ReferenceTextView(text: "hello\nworld\n")
-      defer { reference.close() }
-      reference.textView.setSelectedRange(caret(1))
-      let (window, view) = makeEditor(text: "hello\nworld\n")
-      defer { window.close() }
-      view.select([caret(1)], primary: 0)
-      func event(_ window: NSWindow, y: CGFloat) throws -> NSEvent {
-        try #require(
-          NSEvent.mouseEvent(
-            with: .rightMouseDown, location: NSPoint(x: 100, y: y), modifierFlags: [],
-            timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0,
-            clickCount: 1, pressure: 1))
-      }
-      // 3 行目 (空の行) の高さ。各ビューの最後の行の矩形から求める。
-      let referenceRect = reference.textView.firstRect(
-        forCharacterRange: NSRange(location: 6, length: 1), actualRange: nil)
-      let referenceY = reference.window.convertPoint(
-        fromScreen: NSPoint(x: referenceRect.midX, y: referenceRect.midY - referenceRect.height)).y
-      let referenceMenu = try #require(
-        reference.textView.menu(for: try event(reference.window, y: referenceY)))
-      let lines = view.layout.lineFrames()
-      let last = try #require(lines.last)
-      let y = view.convert(NSPoint(x: 0, y: last.midY + view.textOrigin.y), to: nil).y
-      let menu = try #require(view.menu(for: try event(window, y: y)))
-      #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
-      #expect(describe(menu, in: view) == describe(referenceMenu, in: reference.textView))
     }
 
     @Test func 訳文の改行は本文と同じLFに揃えて置き換える() throws {
