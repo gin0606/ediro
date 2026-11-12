@@ -8,6 +8,12 @@ private func makeStore() -> DocumentStore {
   DocumentStore(fileURL: TestArtifacts.directory().appending(path: "draft.md"))
 }
 
+/// 直前の版の置き場所。README が復旧の手順として利用者に案内しているファイル名なので、
+/// 実装から導かずに名前で固定する。
+private func previousVersion(of store: DocumentStore) -> URL {
+  store.fileURL.deletingLastPathComponent().appending(path: "draft.md.previous")
+}
+
 @Test func 保存した本文を読み戻せる() throws {
   let store = makeStore()
   try store.save("# 下書き\n\n本文")
@@ -51,7 +57,7 @@ private func makeStore() -> DocumentStore {
   try store.save("書き換えた本文")
 
   #expect(try store.load() == "書き換えた本文")
-  #expect(try String(contentsOf: store.previousURL, encoding: .utf8) == "最初の本文")
+  #expect(try String(contentsOf: previousVersion(of: store), encoding: .utf8) == "最初の本文")
 }
 
 @Test func 全消ししても直前の版から戻せる() throws {
@@ -60,27 +66,29 @@ private func makeStore() -> DocumentStore {
   try store.save("")
 
   #expect(try store.load() == "")
-  #expect(try String(contentsOf: store.previousURL, encoding: .utf8) == "失いたくない下書き")
+  #expect(try String(contentsOf: previousVersion(of: store), encoding: .utf8) == "失いたくない下書き")
 }
 
 @Test func 初回保存では直前の版を作らない() throws {
   let store = makeStore()
   try store.save("最初の本文")
-  #expect(!FileManager.default.fileExists(atPath: store.previousURL.path(percentEncoded: false)))
+  #expect(!FileManager.default.fileExists(atPath: previousVersion(of: store).path(percentEncoded: false)))
 }
 
 @Test func 退避待ちのファイルを直前の版で潰さない() throws {
   let store = makeStore()
-  try FileManager.default.createDirectory(
-    at: store.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-  // UTF-8 として読めないバイト列。退避の対象で、複製してよいものではない
+  try store.save("直前の版として残したい本文")
+  try store.save("この後に読めなくなる本文")
+  // UTF-8 として読めないバイト列。退避の対象で、直前の版として複製してよいものではない
   try Data([0xFF, 0xFE]).write(to: store.fileURL)
 
   let moved = try #require(try store.quarantine())
   try store.save("その後に書いた本文")
 
   #expect(try Data(contentsOf: moved) == Data([0xFF, 0xFE]))
-  #expect(!FileManager.default.fileExists(atPath: store.previousURL.path(percentEncoded: false)))
+  #expect(
+    try String(contentsOf: previousVersion(of: store), encoding: .utf8) == "直前の版として残したい本文")
+  #expect(try store.load() == "その後に書いた本文")
 }
 
 @Test func 退避すると元のファイルが別名で残る() throws {
@@ -88,7 +96,9 @@ private func makeStore() -> DocumentStore {
   try store.save("読めなくなる前の本文")
 
   let moved = try #require(try store.quarantine())
-  #expect(moved != store.fileURL)
+  // 復旧の手順として README が利用者に案内している名前
+  #expect(moved.lastPathComponent.hasPrefix("draft.md.unreadable-"))
+  #expect(moved.deletingLastPathComponent() == store.fileURL.deletingLastPathComponent())
   #expect(try String(contentsOf: moved, encoding: .utf8) == "読めなくなる前の本文")
   #expect(try store.load() == "", "退避後の保存先は空になっている")
 }

@@ -42,7 +42,7 @@ public struct DocumentStore: Sendable {
   ///
   /// 全消しのような誤操作はアプリ内の取り消しで戻せるが、それは再起動で失われる。
   /// 残るのは 1 世代だけで、保存のたびに入れ替わる。
-  public var previousURL: URL {
+  private var previousURL: URL {
     fileURL.appendingPathExtension("previous")
   }
 

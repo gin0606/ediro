@@ -10,8 +10,9 @@ import Testing
     .deletingLastPathComponent()  // リポジトリ直下
     .appending(path: "Sources/EdiroCore")
 
-  let files = try FileManager.default
-    .contentsOfDirectory(at: core, includingPropertiesForKeys: nil)
+  // サブディレクトリに分けたファイルも見落とさないよう、再帰して集める。
+  let files = try #require(FileManager.default.enumerator(at: core, includingPropertiesForKeys: nil))
+    .compactMap { $0 as? URL }
     .filter { $0.pathExtension == "swift" }
   #expect(!files.isEmpty, "走査対象が見つからない: \(core.path())")
 
