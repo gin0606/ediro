@@ -58,7 +58,7 @@ final class KeyWindow: NSWindow {
   override var isKeyWindow: Bool { true }
 }
 
-/// ペーストボードに書く内容。ドロップとペーストを参照 NSTextView と比べる。
+/// ペーストボードに書く内容。ドロップとペーストで入る文字を確かめる。
 nonisolated struct PasteboardContent: CustomTestStringConvertible, Sendable {
   enum Kind: Sendable {
     case string, html, rtf, url, file, twoFiles, directory, fileAndString, urlAndString
@@ -74,18 +74,30 @@ nonisolated struct PasteboardContent: CustomTestStringConvertible, Sendable {
     testDescription = description
   }
 
-  static let all: [PasteboardContent] = [
-    .init(.string, "文字列"), .init(.html, "HTML のみ"), .init(.rtf, "RTF"), .init(.url, "URL のみ"),
+  static let all: [PasteboardContent] = ruled + converted + [
+    // 文字コードを示さない HTML は、WebKit が文字コードを推測して読むので、NSTextView でも
+    // Ediro でもロケールによって和文が化ける。どの文字になるかは約束せず、参照 NSTextView との
+    // 比較にだけ使う。
+    .init(.htmlWithoutEncoding, "文字コードを示さない HTML"),
+    .init(.htmlWithCharsetText, "本文に charset を含む HTML"),
+  ]
+
+  /// 入る文字が Ediro の型の選び方で決まる内容。
+  static let ruled: [PasteboardContent] = [
+    .init(.string, "文字列"), .init(.url, "URL のみ"),
     .init(.file, "ファイル URL"), .init(.twoFiles, "ファイル URL 二つ"),
     .init(.directory, "ディレクトリの URL"), .init(.fileAndString, "ファイル URL と文字列"),
     .init(.urlAndString, "URL と文字列"), .init(.htmlAndString, "HTML と文字列"),
     .init(.image, "画像のみ"), .init(.emptyString, "空の文字列"),
     .init(.directoryWithSlash, "末尾にスラッシュのあるフォルダの URL"),
+    .init(.twoWebURLs, "Web の URL 二つ"), .init(.webAndFileURL, "Web の URL とファイル URL"),
+  ]
+
+  /// 書式付きの文字で、入る文字を AppKit の変換器 (RTF と WebKit) が決める内容。
+  static let converted: [PasteboardContent] = [
+    .init(.html, "HTML のみ"), .init(.rtf, "RTF"),
     .init(.htmlWithImage, "画像を含む HTML"), .init(.rtfdWithImage, "画像を含む RTFD"),
-    .init(.shiftJISHTML, "Shift_JIS を示す HTML"), .init(.twoWebURLs, "Web の URL 二つ"),
-    .init(.webAndFileURL, "Web の URL とファイル URL"),
-    .init(.htmlWithoutEncoding, "文字コードを示さない HTML"),
-    .init(.htmlWithCharsetText, "本文に charset を含む HTML"),
+    .init(.shiftJISHTML, "Shift_JIS を示す HTML"),
   ]
 
   @MainActor static var image: NSImage {
@@ -101,7 +113,9 @@ nonisolated struct PasteboardContent: CustomTestStringConvertible, Sendable {
     return rep.representation(using: .png, properties: [:])!.base64EncodedString()
   }
 
-  @MainActor func write(to pasteboard: NSPasteboard) throws {
+  /// 書いたファイルの置き場を返す。ファイルは `dropped file.md` と `日本語.txt`。
+  @discardableResult
+  @MainActor func write(to pasteboard: NSPasteboard) throws -> URL {
     let directory = TestArtifacts.directory()
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let file = directory.appending(path: "dropped file.md")
@@ -167,6 +181,7 @@ nonisolated struct PasteboardContent: CustomTestStringConvertible, Sendable {
     case .webAndFileURL:
       pasteboard.writeObjects([url as NSURL, file as NSURL])
     }
+    return directory
   }
 }
 
@@ -475,61 +490,145 @@ extension AppKitTests {
       #expect(view.text == "hello")
     }
 
-    // MARK: - 参照 NSTextView との差分
+    // MARK: - ペーストボードから入る文字
 
-    @Test(arguments: PasteboardContent.all)
-    func ドロップで入る文字が参照と同じになる(content: PasteboardContent) throws {
-      let reference = ReferenceTextView(text: "hello world")
-      defer { reference.close() }
-      reference.textView.updateDragTypeRegistration()
-      let pasteboard = makePasteboard()
-      defer { pasteboard.releaseGlobally() }
-      try content.write(to: pasteboard)
-      let rect = reference.textView.firstRect(
-        forCharacterRange: NSRange(location: 6, length: 1), actualRange: nil)
-      let referencePoint = reference.window.convertPoint(
-        fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY))
-      let referenceInfo = FakeDraggingInfo(
-        window: reference.window, location: referencePoint, pasteboard: pasteboard)
-      _ = reference.textView.draggingEntered(referenceInfo)
-      let referenceAccepted = reference.textView.performDragOperation(referenceInfo)
-      reference.textView.concludeDragOperation(referenceInfo)
-
+    /// "hello world" の `hello ` と `world` の間にドロップする。受け付けたかとビューを返す。
+    private func drop(_ pasteboard: NSPasteboard) throws -> (accepted: Bool, view: EditorView) {
       let (window, view) = makeEditor(text: "hello world")
       let info = FakeDraggingInfo(
         window: window, location: try point(at: 6, fraction: 0.1, in: view), pasteboard: pasteboard)
       _ = view.draggingEntered(info)
       let accepted = view.performDragOperation(info)
       view.concludeDragOperation(info)
+      return (accepted, view)
+    }
 
-      #expect(accepted == referenceAccepted)
-      #expect(view.text == reference.textView.string)
-      if accepted {
-        #expect(ranges(view) == reference.textView.selectedRanges.map(\.rangeValue))
+    /// `PasteboardContent.ruled` の内容から入る文字。nil なら受け付けない。`directory` は内容を
+    /// 書いたときのファイルの置き場。
+    private func ruledInsertion(_ kind: PasteboardContent.Kind, directory: URL) -> String? {
+      let file = directory.appending(path: "dropped file.md").path(percentEncoded: false)
+      let second = directory.appending(path: "日本語.txt").path(percentEncoded: false)
+      switch kind {
+      // 文字列の型があれば、ほかの型があってもそれを使う。
+      case .string: return "plain text"
+      case .fileAndString: return "dropped file.md"
+      case .urlAndString: return "title"
+      case .htmlAndString: return "s"
+      // Web の URL はパーセントエンコードを解かずに入れる。最初の URL が Web の URL なら、
+      // それだけを入れる。
+      case .url, .twoWebURLs, .webAndFileURL: return "https://example.com/a?b=c%20d"
+      // ファイルの URL はパスにして改行で繋ぐ。フォルダの末尾のスラッシュは付けない。
+      case .file: return file
+      case .twoFiles: return file + "\n" + second
+      case .directory, .directoryWithSlash: return directory.path(percentEncoded: false)
+      // 文字にできる型が無いか、文字が空なら受け付けない。
+      case .image, .emptyString: return nil
+      default:
+        Issue.record("\(kind) は Ediro の型の選び方だけでは文字が決まらない")
+        return nil
       }
     }
 
-    /// ⌘V と、サービスから文字列を受け取る `readSelection(from:)` も、ドロップと同じ読み取りで
-    /// 文字にする。参照 NSTextView の `readSelection(from:)` と比べる。
-    @Test(arguments: PasteboardContent.all)
-    func ペーストで入る文字が参照と同じになる(content: PasteboardContent) throws {
-      let reference = ReferenceTextView(text: "hello world")
-      defer { reference.close() }
+    /// `PasteboardContent.converted` の内容から入った文字に、この順に残るはずの文字。
+    private func convertedWords(_ kind: PasteboardContent.Kind) -> [String] {
+      switch kind {
+      case .html: ["太字", "text", "段落"]
+      case .rtf: ["rtf テキスト"]
+      case .htmlWithImage: ["before", "after"]
+      case .rtfdWithImage: ["pre", "post"]
+      case .shiftJISHTML: ["日本語"]
+      default: []
+      }
+    }
+
+    /// "hello world" の `hello ` と `world` の間に書式付きの内容から入った文字を取り出し、書式の
+    /// 記号と画像の置き場の文字 (U+FFFC) を含まず、元の文字を順に含むかを確かめる。改行や空白の
+    /// 入り方は変換器が決めるので確かめない。
+    private func convertedInsertion(
+      in text: String, from kind: PasteboardContent.Kind,
+      sourceLocation: SourceLocation = #_sourceLocation
+    ) -> String? {
+      guard text.hasPrefix("hello "), text.hasSuffix("world"), text.count >= 11 else {
+        Issue.record("前後の文字が残っていない: \(text.debugDescription)", sourceLocation: sourceLocation)
+        return nil
+      }
+      let inserted = String(text.dropFirst(6).dropLast(5))
+      #expect(!inserted.contains("\u{FFFC}"), sourceLocation: sourceLocation)
+      #expect(
+        inserted.rangeOfCharacter(from: CharacterSet(charactersIn: "<>{}\\")) == nil,
+        "\(inserted.debugDescription)", sourceLocation: sourceLocation)
+      var rest = inserted[...]
+      for word in convertedWords(kind) {
+        guard let found = rest.range(of: word) else {
+          Issue.record(
+            "\(word.debugDescription) が順に含まれない: \(inserted.debugDescription)",
+            sourceLocation: sourceLocation)
+          break
+        }
+        rest = rest[found.upperBound...]
+      }
+      return inserted
+    }
+
+    @Test(arguments: PasteboardContent.ruled)
+    func ドロップで入る文字は型の選び方で決まり_入れた文字を選ぶ(content: PasteboardContent) throws {
+      let pasteboard = makePasteboard()
+      defer { pasteboard.releaseGlobally() }
+      let inserted = ruledInsertion(content.kind, directory: try content.write(to: pasteboard))
+      let (accepted, view) = try drop(pasteboard)
+      #expect(accepted == (inserted != nil))
+      #expect(view.text == "hello \(inserted ?? "")world")
+      if let inserted {
+        #expect(ranges(view) == [NSRange(location: 6, length: (inserted as NSString).length)])
+      }
+    }
+
+    @Test(arguments: PasteboardContent.converted)
+    func 書式付きの文字は書式と画像を除いてドロップ位置に入れて選ぶ(content: PasteboardContent) throws {
       let pasteboard = makePasteboard()
       defer { pasteboard.releaseGlobally() }
       try content.write(to: pasteboard)
-      reference.textView.setSelectedRange(NSRange(location: 6, length: 0))
-      let referenceAccepted = reference.textView.readSelection(from: pasteboard)
+      let (accepted, view) = try drop(pasteboard)
+      #expect(accepted)
+      let inserted = try #require(convertedInsertion(in: view.text, from: content.kind))
+      #expect(ranges(view) == [NSRange(location: 6, length: (inserted as NSString).length)])
+    }
+
+    /// ⌘V と、サービスから文字列を受け取る `readSelection(from:)` も、ドロップと同じ型の選び方で
+    /// 文字にする。
+    @Test(arguments: PasteboardContent.ruled)
+    func ペーストで入る文字は型の選び方で決まる(content: PasteboardContent) throws {
+      let pasteboard = makePasteboard()
+      defer { pasteboard.releaseGlobally() }
+      let inserted = ruledInsertion(content.kind, directory: try content.write(to: pasteboard))
+      let expected = "hello \(inserted ?? "")world"
 
       let (_, pasted) = makeEditor(text: "hello world")
       select(pasted, [NSRange(location: 6, length: 0)])
       pasted.paste(from: pasteboard)
-      #expect(pasted.text == reference.textView.string)
+      #expect(pasted.text == expected)
 
       let (_, read) = makeEditor(text: "hello world")
       select(read, [NSRange(location: 6, length: 0)])
-      #expect(read.readSelection(from: pasteboard) == referenceAccepted)
-      #expect(read.text == reference.textView.string)
+      #expect(read.readSelection(from: pasteboard) == (inserted != nil))
+      #expect(read.text == expected)
+    }
+
+    @Test(arguments: PasteboardContent.converted)
+    func 書式付きの文字は書式と画像を除いてペーストする(content: PasteboardContent) throws {
+      let pasteboard = makePasteboard()
+      defer { pasteboard.releaseGlobally() }
+      try content.write(to: pasteboard)
+
+      let (_, pasted) = makeEditor(text: "hello world")
+      select(pasted, [NSRange(location: 6, length: 0)])
+      pasted.paste(from: pasteboard)
+      _ = convertedInsertion(in: pasted.text, from: content.kind)
+
+      let (_, read) = makeEditor(text: "hello world")
+      select(read, [NSRange(location: 6, length: 0)])
+      #expect(read.readSelection(from: pasteboard))
+      _ = convertedInsertion(in: read.text, from: content.kind)
     }
 
     @Test func ペーストできるかは文字にできる型があるかで決まる() throws {
