@@ -36,6 +36,27 @@ import Foundation
         #expect(d.snapshot.text == "👨‍👩‍👧‍👦\r\nx")
         try e.dispose(); #expect(throws:EditorError.disposed) { try e.move(.forward) }
     }
+    @Test func deletionRangeOfACaretMatchesDeletion() throws {
+        let text = "e\u{301}👨‍👩‍👧‍👦\r\nx"
+        let d = Document(id:"deletion range",text:text,endOfLine:.crlf)
+        let e = try EditorSession(document:d)
+        for (offset, forward, expected) in [
+            (2, false, 0..<2), (1, false, 0..<2), (5, true, 2..<13), (15, false, 13..<15),
+            (13, true, 13..<15), (0, false, 0..<0), (16, true, 16..<16),
+        ] {
+            #expect(try e.deletionRange(ofCaretAt: offset, forward: forward) == expected)
+            // The range is what deleteBackward / deleteForward delete for that caret.
+            try e.setSelections([Selection(try d.snapshot.position(at: offset))])
+            if forward { try e.deleteForward() } else { try e.deleteBackward() }
+            let deleted = (text as NSString).replacingCharacters(in: NSRange(location: expected.lowerBound, length: expected.count), with: "")
+            #expect(d.snapshot.text == deleted)
+            if !expected.isEmpty { try d.undo() }
+            #expect(d.snapshot.text == text)
+        }
+        #expect(throws: EditorError.self) { try e.deletionRange(ofCaretAt: 14, forward: false) }
+        try e.dispose()
+        #expect(throws: EditorError.disposed) { try e.deletionRange(ofCaretAt: 2, forward: false) }
+    }
     @Test func compositionCommitCancelAndExternalExclusion() throws {
         let d = Document(id:"ime",text:"abc")
         let a = try EditorSession(document:d), b = try EditorSession(document:d)

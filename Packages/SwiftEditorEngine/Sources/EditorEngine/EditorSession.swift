@@ -176,6 +176,23 @@ func replacedStarts(_ ranges: [Range<Int>], lengths: [Int]) -> [Int] {
         for character in text { cursor += String(character).utf16.count; boundaries.append(cursor) }
         return forward ? boundaries.first(where: { $0 > offset }) ?? end : boundaries.last(where: { $0 < offset }) ?? start
     }
+    /// The UTF-16 range `deleteBackward` (`forward` false) or `deleteForward` deletes for a caret
+    /// at `offset`: the adjacent grapheme or line separator, or the whole grapheme around an
+    /// interior offset. Empty when there is nothing to delete. Throws for an offset outside the
+    /// text or inside a surrogate pair or CRLF, and after disposal.
+    public func deletionRange(ofCaretAt offset: Int, forward: Bool) throws -> Range<Int> {
+        try ensureAlive()
+        let snapshot = document.snapshot
+        let line = try snapshot.position(at: offset).line, next = try graphemeOffset(offset, forward: forward)
+        var boundary = try snapshot.lineStart(line)
+        for character in try snapshot.line(line) {
+            let end = boundary + String(character).utf16.count
+            if boundary < offset && offset < end { return boundary..<end }
+            boundary = end
+            if boundary >= offset { break }
+        }
+        return min(offset, next)..<max(offset, next)
+    }
     public func deleteBackward(historyGroup: String? = nil) throws { try delete(forward: false, group: historyGroup) }
     public func deleteForward(historyGroup: String? = nil) throws { try delete(forward: true, group: historyGroup) }
     func delete(forward: Bool, group: String?) throws {
@@ -183,17 +200,8 @@ func replacedStarts(_ ranges: [Range<Int>], lengths: [Int]) -> [Int] {
         let snapshot = document.snapshot
         let ranges = try selections.map { s -> Selection in
             if !s.isEmpty { return s }
-            let offset = try snapshot.offset(at: s.head), next = try graphemeOffset(offset, forward: forward)
-            var boundary = try snapshot.lineStart(s.head.line)
-            for character in try snapshot.line(s.head.line) {
-                let end = boundary + String(character).utf16.count
-                if boundary < offset && offset < end {
-                    return Selection(anchor: try snapshot.position(at: boundary), head: try snapshot.position(at: end))
-                }
-                boundary = end
-                if boundary >= offset { break }
-            }
-            return Selection(anchor: try snapshot.position(at: min(offset,next)), head: try snapshot.position(at: max(offset,next)))
+            let range = try deletionRange(ofCaretAt: snapshot.offset(at: s.head), forward: forward)
+            return Selection(anchor: try snapshot.position(at: range.lowerBound), head: try snapshot.position(at: range.upperBound))
         }
         let edits = try canonical(ranges, primary: 0).selections.filter { !$0.isEmpty }.map { TextEdit($0.range, "") }
         try document.perform(edits, expectedVersion: nil, group: group, owner: id, selectionsAfter: nil, provisional: false)

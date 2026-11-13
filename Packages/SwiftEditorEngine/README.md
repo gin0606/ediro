@@ -107,8 +107,10 @@ reversed ranges, surrogate-pair interiors and CRLF interiors throw; they are nev
 silently clamped. Scalar boundaries inside a combining sequence or emoji grapheme are
 legal programmatic positions. Movement chooses extended grapheme boundaries. Deletion
 from a boundary deletes the adjacent grapheme or a complete line separator; deletion
-from an interior scalar boundary expands to the containing grapheme. Selected ranges
-are explicit programmatic ranges and can intentionally edit individual scalars.
+from an interior scalar boundary expands to the containing grapheme;
+`deletionRange(ofCaretAt:forward:)` returns that range for one caret, for commands that
+delete some carets differently. Selected ranges are explicit programmatic ranges and can
+intentionally edit individual scalars.
 
 There is no implicit conversion to Swift `String.Index`. To work with returned line
 strings, use their `utf16` view and convert to `String.Index` only when that conversion
