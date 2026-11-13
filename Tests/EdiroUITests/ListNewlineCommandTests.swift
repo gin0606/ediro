@@ -352,6 +352,34 @@ extension AppKitTests {
       #expect(!blank.document.canUndo)
     }
 
+    // MARK: - Tab と続けた通しの操作
+
+    @Test func ネストした項目を書いて空の項目のEnterで1段ずつ抜ける() {
+      let (view, _) = makeEditor(
+        text: "- 親", insertSpaces: Preferences.default.insertSpaces,
+        tabSize: Preferences.default.tabSize)
+      view.select([caret(3)], primary: 0)
+      func expectState(
+        _ text: String, caret location: Int, sourceLocation: SourceLocation = #_sourceLocation
+      ) {
+        #expect(view.text == text, sourceLocation: sourceLocation)
+        #expect(ranges(view) == [caret(location)], sourceLocation: sourceLocation)
+      }
+
+      enter(view)
+      expectState("- 親\n- ", caret: 6)
+      view.doCommand(by: #selector(NSResponder.insertTab(_:)))
+      expectState("- 親\n    - ", caret: 10)
+      type("子", into: view)
+      expectState("- 親\n    - 子", caret: 11)
+      enter(view)
+      expectState("- 親\n    - 子\n    - ", caret: 18)
+      enter(view)
+      expectState("- 親\n    - 子\n- ", caret: 14)
+      enter(view)
+      expectState("- 親\n    - 子\n", caret: 12)
+    }
+
     // MARK: - 日本語入力
 
     @Test func 変換中のEnterは本文を変えない() {
