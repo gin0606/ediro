@@ -110,23 +110,6 @@ extension EditorView {
     return start <= layout.storage.length ? layout.hardLineRange(containing: start) : nil
   }
 
-  /// 置き換えの後も、各選択が同じ文字を指すようにした位置。キャレットと選択の先頭は、その位置に
-  /// 入れた文字の後ろに移る。選択の終わりは、その位置に入れた文字の前に留まる。ほかの選択が
-  /// 字下げした行の行頭で終わる選択が、足した字下げまで広がらないようにするため。
-  private func keepingCharacters(after replacements: [Replacement]) -> [(anchor: Int, head: Int)] {
-    session.selections.map { selection in
-      let range = nsRange(of: selection.range)
-      let start = offset(range.location, after: replacements)
-      var end = offset(NSMaxRange(range), after: replacements)
-      if range.length > 0 {
-        end -= replacements.filter { $0.range == NSRange(location: NSMaxRange(range), length: 0) }
-          .reduce(0) { $0 + $1.length }
-      }
-      let backward = selection.head < selection.anchor
-      return backward ? (end, start) : (start, end)
-    }
-  }
-
   /// 同じ行を 1 つにまとめ、先頭の順に並べた行。
   private static func uniqueLines(_ lines: [NSRange]) -> [NSRange] {
     Dictionary(lines.map { ($0.location, $0) }, uniquingKeysWith: { first, _ in first }).values

@@ -46,8 +46,8 @@ final class TextChecker: TextCheckingAnnotationClient {
   private var replacementGroup: String?
   private var replacementCount = 0
   /// 打鍵以外で入った文字 (貼り付け、確定した変換、引用符の置換を通さないコマンド、取り消し
-  /// など) のオフセット。コントローラは打鍵した文字の前後も見て自動置換するので、これらの
-  /// 文字に掛かる自動置換は当てない (NSTextView は打鍵した文字だけを置き換える)。
+  /// など) と、打鍵で選択を囲んだ記号のオフセット。コントローラは打鍵した文字の前後も見て
+  /// 自動置換するので、これらの文字に掛かる自動置換は当てない (NSTextView は打鍵した文字だけを置き換える)。
   private var untyped = IndexSet()
   /// 打鍵以外の編集で変わり、スペルと文法を検査し直す文字。コントローラは変更を知らされたのと
   /// 同じメインキューの周回で頼まれた検査を捨てるので、次の周回でまとめて検査する。
@@ -142,6 +142,15 @@ final class TextChecker: TextCheckingAnnotationClient {
     for range in ranges where range.length > 0 {
       controller.insertedText(in: range)
       controller.considerTextChecking(for: range)
+    }
+  }
+
+  /// 打鍵の中で入ったが、打鍵した文字として扱わない文字の範囲 (選択を囲んだ記号)。打鍵以外で
+  /// 入った文字と同じく、自動置換を当てずに検査だけし直す。
+  func insertedUntypedText(in ranges: [NSRange]) {
+    for range in ranges {
+      untyped.insert(integersIn: range.location..<NSMaxRange(range))
+      checkSpelling(in: range)
     }
   }
 

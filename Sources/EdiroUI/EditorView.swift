@@ -229,7 +229,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     return NSRange(location: start, length: offset(of: range.end) - start)
   }
 
-  private func textRange(of range: NSRange) -> TextRange {
+  func textRange(of range: NSRange) -> TextRange {
     TextRange(position(of: range.location), position(of: NSMaxRange(range)))
   }
 
@@ -787,6 +787,24 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       }
     }
     return offset + delta
+  }
+
+  /// 重ならない置き換えを位置の順に当てた後も、各選択が同じ文字を指すようにした位置。キャレットと
+  /// 選択の先頭は、その位置に入れた文字の後ろに移る。選択の終わりは、その位置に入れた文字の前に
+  /// 留まる。選択の終わりに入れた文字 (ほかの選択が字下げした行頭や、選択を囲む閉じ記号) まで、
+  /// 選択が広がらないようにするため。
+  func keepingCharacters(after replacements: [Replacement]) -> [(anchor: Int, head: Int)] {
+    session.selections.map { selection in
+      let range = nsRange(of: selection.range)
+      let start = offset(range.location, after: replacements)
+      var end = offset(NSMaxRange(range), after: replacements)
+      if range.length > 0 {
+        end -= replacements.filter { $0.range == NSRange(location: NSMaxRange(range), length: 0) }
+          .reduce(0) { $0 + $1.length }
+      }
+      let backward = selection.head < selection.anchor
+      return backward ? (end, start) : (start, end)
+    }
   }
 
   /// 重ならない置き換えを位置の順に当てた後の、今の選択の位置。
@@ -1410,6 +1428,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       if commitComposition(text) { retainAlternatives(from: string, insertedText: text) }
       return
     }
+    // 入力メソッドが置換範囲を指定してきた入力は、選択を囲まない。
+    if replacementRange.location == NSNotFound, surroundSelections(with: text) { return }
     let primary = nsRange(of: session.primarySelection.range)
     let inserted = typing {
       if let widening = widening(of: replacementRange, around: primary) {
@@ -1493,16 +1513,28 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 
   /// 打鍵で文字を入れる。入った文字を、打鍵で入った文字として自動置換と検査に回す。
+  /// `untyped` (入れた後の本文での範囲) に入った文字は、打鍵で入った文字として扱わず、自動置換を
+  /// 掛けずに検査だけに回す。
   @discardableResult
-  func typing(_ operation: () throws -> Void) -> Bool {
+  func typing(untyped: [NSRange] = [], _ operation: () throws -> Void) -> Bool {
     isTyping = true
     typedRanges = []
     let typed = perform(operation)
     isTyping = false
-    let ranges = typedRanges
+    let changed = !typedRanges.isEmpty
+    var ranges = typedRanges
+    if !untyped.isEmpty {
+      let excluded = untyped.reduce(into: IndexSet()) {
+        $0.insert(integersIn: $1.location..<NSMaxRange($1))
+      }
+      ranges.removeAll {
+        $0.length > 0 && excluded.contains(integersIn: $0.location..<NSMaxRange($0))
+      }
+    }
     typedRanges = []
     guard typed else { return false }
-    if !ranges.isEmpty { document.setUndoActionName(standardUndoName(for: .typing)) }
+    if changed { document.setUndoActionName(standardUndoName(for: .typing)) }
+    textChecker.insertedUntypedText(in: untyped)
     textChecker.insertedText(in: ranges.filter { $0.length > 0 })
     // 打鍵の経路で文字を消しただけの範囲 (入力メソッドが空の文字を入れた場合など) は検査し直す。
     ranges.filter { $0.length == 0 }.forEach(textChecker.checkSpelling(in:))
