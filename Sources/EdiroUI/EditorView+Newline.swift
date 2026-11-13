@@ -127,17 +127,12 @@ extension EditorView {
       return rewriting(
         to: indentation + marker.text + afterMarker(of: item, in: ns, through: ns.length))
     }
-    if ns.length > 0, caret == ns.length, Self.isBlank(line),
+    if ns.length > 0, caret == ns.length, Indentation.isBlank(line),
       !isInCodeBlock(lineStartingAt: first.location)
     {
       return rewriting(to: ns.substring(from: indentUnit.outdentLength(of: line)))
     }
     return inserting(plain)
-  }
-
-  /// スペースとタブ文字だけの文字列か。空なら true。
-  private static func isBlank(_ text: String) -> Bool {
-    text.utf16.allSatisfy { $0 == 0x20 || $0 == 0x09 }
   }
 
   /// 項目 `item` (行 `line`) のマーカーの直後から `end` までの文字。チェックボックスは未チェックにする。
@@ -164,7 +159,7 @@ extension EditorView {
     while current.location > 0 {
       current = layout.hardLineRange(containing: current.location - 1)
       let text = string.substring(with: current)
-      guard !Self.isBlank(text) else { continue }
+      guard !Indentation.isBlank(text) else { continue }
       let lineWidth = indentUnit.width(of: text)
       if lineWidth > width { continue }
       guard lineWidth == width, let item = ListLine(text),

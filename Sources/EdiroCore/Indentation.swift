@@ -5,6 +5,11 @@ public enum Indentation {
   public static func leadingWhitespace(of line: some StringProtocol) -> String {
     String(line.prefix { $0 == " " || $0 == "\t" })
   }
+
+  /// スペースとタブ文字だけの文字列か。空なら true。
+  public static func isBlank(_ text: some StringProtocol) -> Bool {
+    text.utf16.allSatisfy { $0 == space || $0 == tab }
+  }
 }
 
 /// 字下げの 1 段。設定の Tab Size と Insert Spaces から決まる。
@@ -30,6 +35,26 @@ public struct IndentUnit: Equatable, Sendable {
     guard let first = units.first else { return 0 }
     if first == tab { return 1 }
     return units.prefix(tabSize).prefix { $0 == space }.count
+  }
+
+  /// Backspace でキャレットの前の 1 段ぶんとして消す長さ (UTF-16)。`prefix` は行頭から
+  /// キャレットまでの文字で、空か空白以外の文字を含めば 0。
+  ///
+  /// 直前がタブ文字ならそれ 1 つ。スペースなら直前に続くスペースを最大 Tab Size 個で、`prefix` が
+  /// スペースだけなら Tab Size の倍数の桁まで (Tab Size 4 で 6 桁なら 2 個、8 桁なら 4 個)。
+  /// タブ文字が混じると桁がタブ文字の表示幅に左右されるので、倍数にはそろえない。
+  public func backspaceLength(before prefix: some StringProtocol) -> Int {
+    let units = Array(prefix.utf16)
+    guard let last = units.last, Indentation.isBlank(prefix) else { return 0 }
+    if last == tab { return 1 }
+    // Tab Size が 0 の単位を直接作っても、0 で割らないようにする。
+    let size = max(tabSize, 1)
+    let spaces = units.reversed().prefix { $0 == space }.count
+    if spaces == units.count {
+      let remainder = spaces % size
+      return remainder == 0 ? size : remainder
+    }
+    return min(spaces, size)
   }
 
   /// 行頭の字下げの幅 (桁)。スペースは 1 桁、タブ文字は Tab Size 桁と数え、空白以外の文字で

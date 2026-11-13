@@ -10,6 +10,13 @@ import Testing
   #expect(Indentation.leadingWhitespace(of: "") == "")
 }
 
+@Test func 空白だけの文字列はスペースとタブ文字だけからなる() {
+  #expect(Indentation.isBlank(" \t "))
+  #expect(Indentation.isBlank(""))
+  #expect(!Indentation.isBlank("  a"))
+  #expect(!Indentation.isBlank("\u{3000}"))
+}
+
 // MARK: - 1 段の字下げ・字上げ
 
 @Test func 字下げの1段はスペースならTabSize個でそうでなければタブ文字() {
@@ -32,6 +39,31 @@ func 字上げは行頭のタブ文字1つかスペースを最大TabSize個消�
 @Test func 字上げで消すスペースの数はTabSizeで決まる() {
   #expect(IndentUnit(tabSize: 2, insertSpaces: true).outdentLength(of: "     ab") == 2)
   #expect(IndentUnit(tabSize: 8, insertSpaces: true).outdentLength(of: "     ab") == 5)
+}
+
+@Test(arguments: [
+  // スペースだけ: Tab Size の倍数の桁まで。
+  ("    ", 4), ("        ", 4), ("      ", 2), ("     ", 1), ("  ", 2), (" ", 1),
+  // 直前がタブ文字ならそれ 1 つ。
+  ("\t", 1), ("\t\t", 1), ("    \t", 1),
+  // タブ文字が混じるスペースは、直前に続くものを最大 Tab Size 個。
+  ("\t  ", 2), ("\t      ", 4), ("  \t ", 1),
+  // 空、または空白以外の文字を含めば消さない。
+  ("", 0), ("a ", 0), ("  a    ", 0), ("\u{3000}", 0),
+])
+func Backspaceはキャレットの前の1段を消す(prefix: String, length: Int) {
+  for insertSpaces in [true, false] {
+    #expect(
+      IndentUnit(tabSize: 4, insertSpaces: insertSpaces).backspaceLength(before: prefix) == length)
+  }
+}
+
+@Test func Backspaceで消すスペースの数はTabSizeで決まる() {
+  #expect(IndentUnit(tabSize: 2, insertSpaces: true).backspaceLength(before: "     ") == 1)
+  #expect(IndentUnit(tabSize: 2, insertSpaces: true).backspaceLength(before: "    ") == 2)
+  #expect(IndentUnit(tabSize: 8, insertSpaces: true).backspaceLength(before: "      ") == 6)
+  #expect(IndentUnit(tabSize: 2, insertSpaces: true).backspaceLength(before: "\t     ") == 2)
+  #expect(IndentUnit(tabSize: 0, insertSpaces: true).backspaceLength(before: "  ") == 1)
 }
 
 @Test(arguments: [

@@ -103,32 +103,50 @@ extension EditorView {
     return reference
   }
 
+  /// 選択の削除がスマート削除 (`smartDeleteSelection(forward:)`) になるか。スマート挿入削除が
+  /// オンで、単語単位で選んだ選択があるとき。
+  var usesSmartDeletion: Bool {
+    smartInsertDeleteEnabled && inputAssistance.wordSelection
+      && session.selections.contains(where: { !$0.isEmpty })
+  }
+
   @discardableResult
   func smartDeleteSelection(forward: Bool? = nil) -> Bool {
-    guard smartInsertDeleteEnabled, inputAssistance.wordSelection,
-      session.selections.contains(where: { !$0.isEmpty }) else { return false }
+    guard usesSmartDeletion else { return false }
     let reference = inputReference()
+    deleteRanges(
+      session.selections.compactMap {
+        smartDeletionRange(of: nsRange(of: $0.range), forward: forward, reference: reference)
+      })
+    return true
+  }
+
+  /// スマート削除 (`smartDeleteSelection(forward:)`) で選択 `range` を消す範囲。選択のない
+  /// キャレットは、`forward` が nil なら消さず、そうでなければ前か後ろの 1 文字を消す。合成文字の
+  /// 途中のキャレットは、その文字ごと消す。`reference` は `inputReference()`。
+  func smartDeletionRange(of range: NSRange, forward: Bool?, reference: NSTextView) -> NSRange? {
+    if range.length > 0 { return reference.smartDeleteRange(forProposedRange: range) }
+    guard let forward else { return nil }
     let string = layout.storage.mutableString
-    let ranges = session.selections.compactMap { selection -> NSRange? in
-      let range = nsRange(of: selection.range)
-      if range.length > 0 { return reference.smartDeleteRange(forProposedRange: range) }
-      guard let forward else { return nil }
-      let caret = range.location
-      if caret < string.length {
-        let character = string.rangeOfComposedCharacterSequence(at: caret)
-        if forward || character.location < caret { return character }
-      }
-      return !forward && caret > 0 ? string.rangeOfComposedCharacterSequence(at: caret - 1) : nil
-    }.sorted { $0.location < $1.location }
+    let caret = range.location
+    if caret < string.length {
+      let character = string.rangeOfComposedCharacterSequence(at: caret)
+      if forward || character.location < caret { return character }
+    }
+    return !forward && caret > 0 ? string.rangeOfComposedCharacterSequence(at: caret - 1) : nil
+  }
+
+  /// `ranges` を消す。重なるか接する範囲は 1 つにまとめる。選択は消した後も同じ文字を指し、
+  /// 消した範囲の中の位置はその範囲の始まりに移る。
+  func deleteRanges(_ ranges: [NSRange], historyGroup: String? = nil) {
     var merged: [NSRange] = []
-    for range in ranges {
+    for range in ranges.sorted(by: { $0.location < $1.location }) {
       if let last = merged.last, range.location <= NSMaxRange(last) {
         merged[merged.count - 1] = NSUnionRange(last, range)
       } else { merged.append(range) }
     }
     let replacements = merged.map { Replacement($0, "") }
-    replace(replacements, selecting: selections(after: replacements))
-    return true
+    replace(replacements, selecting: selections(after: replacements), historyGroup: historyGroup)
   }
 
   enum UndoOperation: Hashable { case typing, cut, paste }

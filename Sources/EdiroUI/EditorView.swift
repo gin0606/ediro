@@ -696,6 +696,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   override func deleteBackward(_ sender: Any?) {
     withUndoName(standardUndoName(for: .typing)) {
+      if keepingKill({ deleteListMarkerOrIndentationBackward() }) { return }
       if !smartDeleteSelection(forward: false) {
         keepingKill { perform { try session.deleteBackward(historyGroup: "deleting") } }
       }

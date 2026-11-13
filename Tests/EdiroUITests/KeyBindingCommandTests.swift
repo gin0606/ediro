@@ -156,6 +156,13 @@ extension AppKitTests {
       .init(
         "one two\nthree", 2, 0, "deleteToEndOfParagraph:", "deleteBackward:",
         "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:", then: "othreee two\n", 12, 0),
+      // リストのマーカーや字下げの 1 段を消す Backspace も、文字を消すだけの編集。
+      .init(
+        "    xy\nz", 4, 0, "deleteToEndOfParagraph:", "deleteBackward:", "deleteToEndOfParagraph:",
+        "moveToEndOfDocument:", "yank:", then: "zxy\n", 4, 0),
+      .init(
+        "- xy\nz", 2, 0, "deleteToEndOfParagraph:", "deleteBackward:", "deleteToEndOfParagraph:",
+        "moveToEndOfDocument:", "yank:", then: "zxy\n", 4, 0),
       .init(
         "one two\nthree", 2, 0, "deleteToEndOfParagraph:", "deleteWordBackward:",
         "deleteToEndOfParagraph:", "moveToEndOfDocument:", "yank:", then: "threee two\n", 11, 0),
