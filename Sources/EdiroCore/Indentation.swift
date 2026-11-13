@@ -1,20 +1,9 @@
 import Foundation
 
 public enum Indentation {
-  /// 指定位置より前にある、その行の先頭の空白を返す。
-  /// 改行したときに同じ深さから書き始められるようにするために使う。
-  ///
-  /// 見るのは行頭から指定位置までに限る。行全体を見ると、カーソルより後ろにある
-  /// 空白まで引き継いでしまい、インデントの内側で改行したときに深さが増える。
-  ///
-  /// 位置は UTF-16 オフセット。NSTextView の選択範囲をそのまま渡せる。
-  public static func leadingWhitespace(in text: String, at location: Int) -> String {
-    let ns = text as NSString
-    let clamped = min(max(location, 0), ns.length)
-    let lineStart = ns.lineRange(for: NSRange(location: clamped, length: 0)).location
-    let beforeCursor = ns.substring(
-      with: NSRange(location: lineStart, length: clamped - lineStart))
-    return String(beforeCursor.prefix { $0 == " " || $0 == "\t" })
+  /// 行頭の空白 (スペースとタブ文字)。`line` は行頭からの文字。
+  public static func leadingWhitespace(of line: some StringProtocol) -> String {
+    String(line.prefix { $0 == " " || $0 == "\t" })
   }
 }
 
@@ -42,6 +31,23 @@ public struct IndentUnit: Equatable, Sendable {
     if first == tab { return 1 }
     return units.prefix(tabSize).prefix { $0 == space }.count
   }
+
+  /// 行頭の字下げの幅 (桁)。スペースは 1 桁、タブ文字は Tab Size 桁と数え、空白以外の文字で
+  /// 止まる。桁を Tab Size の倍数にそろえないのは、字下げの段の数え方 (`outdentLength(of:)`)
+  /// と同じく、タブ文字 1 つを 1 段と見るため。`line` は行頭からの文字。
+  public func width(of line: some StringProtocol) -> Int {
+    var width = 0
+    for unit in line.utf16 {
+      if unit == space {
+        width += 1
+      } else if unit == tab {
+        width += tabSize
+      } else {
+        break
+      }
+    }
+    return width
+  }
 }
 
 extension Preferences {
@@ -64,6 +70,35 @@ public struct ListLine: Equatable, Sendable {
     case bullet(Character)
     /// 番号付き。値は `.` の前の数字の並び。
     case ordered(String)
+
+    /// 行に書く文字。番号付きなら `.` まで含む。
+    public var text: String {
+      switch self {
+      case .bullet(let character): String(character)
+      case .ordered(let number): number + "."
+      }
+    }
+
+    /// 次の項目のマーカー。記号はそのまま、番号付きは番号を 1 つ進める (`9` の次は `10`、
+    /// `09` の次は `10`)。桁の多い番号でもあふれないよう、数字の並びのまま繰り上げる。番号が
+    /// ASCII 数字の並びでなければそのまま。
+    public var next: Marker {
+      guard case .ordered(let number) = self, !number.isEmpty,
+        number.utf8.allSatisfy({ (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) })
+      else { return self }
+      var digits = Array(number.utf8)
+      var index = digits.count - 1
+      while index >= 0, digits[index] == UInt8(ascii: "9") {
+        digits[index] = UInt8(ascii: "0")
+        index -= 1
+      }
+      if index >= 0 {
+        digits[index] += 1
+      } else {
+        digits.insert(UInt8(ascii: "1"), at: 0)
+      }
+      return .ordered(String(decoding: digits, as: UTF8.self))
+    }
   }
 
   public struct Checkbox: Equatable, Sendable {

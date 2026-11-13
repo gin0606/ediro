@@ -545,17 +545,6 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     }
   }
 
-  /// 改行して、各キャレットの行頭の空白をそれぞれ引き継ぐ。
-  func insertNewlineKeepingIndent() {
-    let text = self.text
-    let texts = session.selections.map { selection in
-      "\n" + Indentation.leadingWhitespace(in: text, at: offset(of: selection.range.start))
-    }
-    typing {
-      try session.type(texts, historyGroup: "typing")
-    }
-  }
-
   // MARK: - キー入力
 
   override func keyDown(with event: NSEvent) {
@@ -751,10 +740,10 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     deleteToBoundary(paragraph: true, end: true)
   }
 
-  override func insertNewline(_ sender: Any?) { insertNewlineKeepingIndent() }
-  override func insertNewlineIgnoringFieldEditor(_ sender: Any?) { insertNewlineKeepingIndent() }
-  override func insertLineBreak(_ sender: Any?) { insertNewlineKeepingIndent() }
-  override func insertParagraphSeparator(_ sender: Any?) { insertNewlineKeepingIndent() }
+  override func insertNewline(_ sender: Any?) { insertNewlineInContext() }
+  override func insertNewlineIgnoringFieldEditor(_ sender: Any?) { insertNewlineInContext() }
+  override func insertLineBreak(_ sender: Any?) { insertNewlineInContext() }
+  override func insertParagraphSeparator(_ sender: Any?) { insertNewlineInContext() }
   override func insertTab(_ sender: Any?) { indent() }
 
   /// Option+Tab。NSTextView と同じく、設定によらずタブ文字を入れる。字下げをスペースにしていても

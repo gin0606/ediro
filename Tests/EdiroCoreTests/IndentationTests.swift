@@ -3,19 +3,11 @@ import Testing
 
 @testable import EdiroCore
 
-private func indent(_ text: String, at location: Int) -> String {
-  Indentation.leadingWhitespace(in: text, at: location)
-}
-
-@Test func タブも引き継ぐ() {
-  let text = "\t\t深い行"
-  #expect(indent(text, at: text.utf16.count) == "\t\t")
-}
-
-@Test func 範囲外の位置でも落ちない() {
-  #expect(indent("", at: 0) == "")
-  #expect(indent("abc", at: 999) == "")
-  #expect(indent("  abc", at: -5) == "")
+@Test func 行頭の空白はスペースとタブ文字の並び() {
+  #expect(Indentation.leadingWhitespace(of: "\t  \t深い行") == "\t  \t")
+  #expect(Indentation.leadingWhitespace(of: "  a  ") == "  ")
+  #expect(Indentation.leadingWhitespace(of: "\u{3000}a") == "")
+  #expect(Indentation.leadingWhitespace(of: "") == "")
 }
 
 // MARK: - 1 段の字下げ・字上げ
@@ -42,7 +34,36 @@ func 字上げは行頭のタブ文字1つかスペースを最大TabSize個消�
   #expect(IndentUnit(tabSize: 8, insertSpaces: true).outdentLength(of: "     ab") == 5)
 }
 
+@Test(arguments: [
+  ("", 0), ("ab", 0), ("  ab", 2), ("\tab", 4), ("\t  ab", 6), (" \t ab", 6), ("\t\t", 8),
+  ("  a  b", 2), ("\u{3000}a", 0),
+])
+func 字下げの幅はタブ文字をTabSize桁と数える(line: String, width: Int) {
+  for insertSpaces in [true, false] {
+    #expect(IndentUnit(tabSize: 4, insertSpaces: insertSpaces).width(of: line) == width)
+  }
+}
+
+@Test func タブ文字の桁数はTabSizeで決まる() {
+  #expect(IndentUnit(tabSize: 2, insertSpaces: true).width(of: "\t ab") == 3)
+  #expect(IndentUnit(tabSize: 8, insertSpaces: false).width(of: "\t\tab") == 16)
+}
+
 // MARK: - リスト行
+
+@Test(arguments: [
+  (ListLine.Marker.bullet("-"), "-", ListLine.Marker.bullet("-")), (.bullet("*"), "*", .bullet("*")),
+  (.bullet("+"), "+", .bullet("+")), (.ordered("1"), "1.", .ordered("2")),
+  (.ordered("9"), "9.", .ordered("10")), (.ordered("09"), "09.", .ordered("10")),
+  (.ordered("0"), "0.", .ordered("1")), (.ordered("199"), "199.", .ordered("200")),
+  (.ordered("99999999999999999999"), "99999999999999999999.", .ordered("100000000000000000000")),
+  (.ordered("١"), "١.", .ordered("١")), (.ordered("1a"), "1a.", .ordered("1a")),
+  (.ordered(""), ".", .ordered("")),
+])
+func マーカーの文字と次の項目のマーカー(marker: ListLine.Marker, text: String, next: ListLine.Marker) {
+  #expect(marker.text == text)
+  #expect(marker.next == next)
+}
 
 @Test(arguments: [
   ("- a", ListLine.Marker.bullet("-")), ("* a", .bullet("*")), ("+ a", .bullet("+")),
