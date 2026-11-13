@@ -69,6 +69,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// Cmd+クリックで開く URL と、そのツールチップ。
   var links = LinkState()
   let inputAssistance = InputAssistanceState()
+  /// Tab と Shift+Tab で足し引きする字下げの 1 段。設定から EditorTextController が渡す。
+  var indentUnit = Preferences.default.indentUnit
   private lazy var engineUndoManager = EditorUndoManager(view: self)
   override var undoManager: UndoManager? { engineUndoManager }
   private var accessibilitySelections: [NSRange] = []
@@ -753,11 +755,11 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   override func insertNewlineIgnoringFieldEditor(_ sender: Any?) { insertNewlineKeepingIndent() }
   override func insertLineBreak(_ sender: Any?) { insertNewlineKeepingIndent() }
   override func insertParagraphSeparator(_ sender: Any?) { insertNewlineKeepingIndent() }
-  override func insertTab(_ sender: Any?) { typeTab() }
-  override func insertTabIgnoringFieldEditor(_ sender: Any?) { typeTab() }
+  override func insertTab(_ sender: Any?) { indent() }
 
-  /// タブも打鍵で入った文字として、自動置換と検査に回す。
-  private func typeTab() {
+  /// Option+Tab。NSTextView と同じく、設定によらずタブ文字を入れる。字下げをスペースにしていても
+  /// タブ文字を打てるようにするため。打鍵で入った文字として、自動置換と検査に回す。
+  override func insertTabIgnoringFieldEditor(_ sender: Any?) {
     typing { try session.type("\t", historyGroup: "typing") }
   }
 
@@ -1110,8 +1112,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   /// NSTextView と同じく改ページの文字 (U+000C) を入れる。
   override func insertContainerBreak(_ sender: Any?) { type("\u{0C}") }
 
-  /// フィールドエディタではないので何もしない。NSTextView も本文の編集では何もしない。
-  override func insertBacktab(_ sender: Any?) {}
+  /// NSTextView は本文の編集では何もしないが、ここでは行を 1 段字上げする (`outdent()`)。
+  override func insertBacktab(_ sender: Any?) { outdent() }
 
   /// 選択した範囲を消す。kill buffer にもクリップボードにも入れない。
   @objc func delete(_ sender: Any?) {
@@ -1502,7 +1504,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   /// 打鍵で文字を入れる。入った文字を、打鍵で入った文字として自動置換と検査に回す。
   @discardableResult
-  private func typing(_ operation: () throws -> Void) -> Bool {
+  func typing(_ operation: () throws -> Void) -> Bool {
     isTyping = true
     typedRanges = []
     let typed = perform(operation)

@@ -28,6 +28,23 @@ private func makeDefaults() -> InMemoryStore { InMemoryStore() }
   #expect(defaults.integer(forKey: "tabSize") == 2)
 }
 
+@Test func 字下げをスペースにするかを保存して読み戻せる() {
+  for insertSpaces in [false, true] {
+    let defaults = makeDefaults()
+    var preferences = Preferences.default
+    preferences.insertSpaces = insertSpaces
+    preferences.save(to: defaults)
+    #expect(defaults.object(forKey: "insertSpaces") as? Bool == insertSpaces)
+    #expect(Preferences.load(from: defaults).insertSpaces == insertSpaces)
+  }
+}
+
+@Test func 字下げをスペースにするかが未保存の既存ユーザーはオンになる() {
+  let defaults = InMemoryStore(["theme": "aesthetic-wave", "tabSize": 2])
+  #expect(Preferences.load(from: defaults).insertSpaces)
+  #expect(Preferences.default.insertSpaces)
+}
+
 @Test func 未保存の状態では既定値になる() {
   #expect(Preferences.load(from: makeDefaults()) == .default)
 }

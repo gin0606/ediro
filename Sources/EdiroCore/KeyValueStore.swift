@@ -11,6 +11,7 @@ public protocol KeyValueStore: AnyObject {
   func string(forKey key: String) -> String?
   func double(forKey key: String) -> Double
   func integer(forKey key: String) -> Int
+  func bool(forKey key: String) -> Bool
   func set(_ value: Any?, forKey key: String)
 }
 

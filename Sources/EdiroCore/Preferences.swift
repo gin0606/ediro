@@ -7,18 +7,23 @@ public struct Preferences: Equatable, Sendable {
   /// 空文字はシステム既定のフォントを使う意味。
   public var fontName: String
   public var tabSize: Int
+  /// Tab で入れる字下げをスペースにするか。オフならタブ文字を入れる。
+  public var insertSpaces: Bool
 
   public static let `default` = Preferences(
-    themeID: Theme.fallback.id, fontSize: 13, fontName: "", tabSize: 4)
+    themeID: Theme.fallback.id, fontSize: 13, fontName: "", tabSize: 4, insertSpaces: true)
 
   public static let fontSizeRange: ClosedRange<Double> = 10...100
   public static let tabSizeRange: ClosedRange<Int> = 1...10
 
-  public init(themeID: String, fontSize: Double, fontName: String, tabSize: Int) {
+  public init(
+    themeID: String, fontSize: Double, fontName: String, tabSize: Int, insertSpaces: Bool = true
+  ) {
     self.themeID = themeID
     self.fontSize = fontSize
     self.fontName = fontName
     self.tabSize = tabSize
+    self.insertSpaces = insertSpaces
   }
 
   public var theme: Theme { Theme.theme(id: themeID) }
@@ -40,6 +45,7 @@ extension Preferences {
     static let fontSize = "fontSize"
     static let fontName = "fontName"
     static let tabSize = "tabSize"
+    static let insertSpaces = "insertSpaces"
   }
 
   /// 設定の置き場所は外界なので、欠けた値・壊れた値は既定値で補う。
@@ -53,6 +59,9 @@ extension Preferences {
     if defaults.object(forKey: Key.tabSize) != nil {
       preferences.tabSize = defaults.integer(forKey: Key.tabSize)
     }
+    if defaults.object(forKey: Key.insertSpaces) != nil {
+      preferences.insertSpaces = defaults.bool(forKey: Key.insertSpaces)
+    }
     preferences.clamp()
     return preferences
   }
@@ -62,5 +71,6 @@ extension Preferences {
     defaults.set(fontSize, forKey: Key.fontSize)
     defaults.set(fontName, forKey: Key.fontName)
     defaults.set(tabSize, forKey: Key.tabSize)
+    defaults.set(insertSpaces, forKey: Key.insertSpaces)
   }
 }

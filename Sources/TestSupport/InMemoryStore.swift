@@ -13,5 +13,6 @@ public final class InMemoryStore: KeyValueStore {
   public func string(forKey key: String) -> String? { values[key] as? String }
   public func double(forKey key: String) -> Double { values[key] as? Double ?? 0 }
   public func integer(forKey key: String) -> Int { values[key] as? Int ?? 0 }
+  public func bool(forKey key: String) -> Bool { values[key] as? Bool ?? false }
   public func set(_ value: Any?, forKey key: String) { values[key] = value }
 }

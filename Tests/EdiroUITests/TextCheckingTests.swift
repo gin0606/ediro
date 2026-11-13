@@ -648,6 +648,8 @@ extension AppKitTests {
 
       let (window, view) = makeEditor(text: "")
       defer { window.close() }
+      // 参照と同じくタブ文字を入れる設定にして、本文を比べられるようにする。
+      view.indentUnit.insertSpaces = false
       view.isAutomaticQuoteSubstitutionEnabled = true
       view.isAutomaticDashSubstitutionEnabled = true
       await typeWithCommands(input, into: view)

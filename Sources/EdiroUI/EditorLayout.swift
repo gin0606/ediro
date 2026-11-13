@@ -369,6 +369,20 @@ final class EditorLayout {
       && !(character == 0x0C && index == string.length - 1)
   }
 
+  /// オフセットを含む行の、区切りの文字を除いた範囲。折り返しでは分けず、`lineBreaks` の文字
+  /// (改行、U+2029、改ページなど) でだけ分ける。段落か文書の末尾にある改ページなどの直後の位置は、
+  /// キャレットを描く位置と同じく、空の行にある。`lineRange(containing:)` はその位置を前の行に
+  /// 含めるが、それは NSTextView の行のコマンドに合わせた扱い。
+  func hardLineRange(containing offset: Int) -> NSRange {
+    let string = storage.mutableString
+    let offset = min(max(offset, 0), string.length)
+    var start = offset
+    var end = offset
+    while start > 0, !Self.lineBreaks.contains(string.character(at: start - 1)) { start -= 1 }
+    while end < string.length, !Self.lineBreaks.contains(string.character(at: end)) { end += 1 }
+    return NSRange(location: start, length: end - start)
+  }
+
   /// オフセットを含む段落の範囲。段落は改行と U+2029 で区切り、区切りの文字は含めない。
   func paragraphRange(containing offset: Int) -> NSRange {
     let string = storage.mutableString

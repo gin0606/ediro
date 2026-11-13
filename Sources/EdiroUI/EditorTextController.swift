@@ -28,6 +28,7 @@ public final class EditorTextController: NSObject {
     super.init()
 
     editorView.didChangeText = { [weak self] lines in self?.textDidChange(lines) }
+    editorView.indentUnit = state.preferences.indentUnit
     applyAppearance()
     // 初回だけは待たずに掛ける。最初の描画が素の本文になるのを避ける。
     highlight()
@@ -67,6 +68,7 @@ public final class EditorTextController: NSObject {
     guard theme != state.theme || preferences != state.preferences else { return }
     theme = state.theme
     preferences = state.preferences
+    editorView.indentUnit = preferences.indentUnit
     attributer = MarkdownAttributer(theme: theme, preferences: preferences)
     applyAppearance()
     highlight()

@@ -45,6 +45,11 @@ struct PreferencesView: View {
         .labelsHidden()
       }
 
+      LabeledContent("Insert Spaces") {
+        Toggle("", isOn: $state.preferences.insertSpaces)
+          .labelsHidden()
+      }
+
       Text("Ediro \(Self.appVersion)")
         .font(.system(size: 11))
         .opacity(0.6)
