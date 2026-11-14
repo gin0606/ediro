@@ -26,7 +26,7 @@ struct TextCheckingSettings: Equatable {
 /// 本文と同じ文字列を持つ別の属性付き文字列 `annotations` に持つ。写しの属性は Markdown の装飾が
 /// 当て直すので、そこに持つと装飾のたびに消える。下線は TextKit 2 の rendering attribute で描く。
 ///
-/// 自動スペル修正は旧版の棚卸しで無効だったため実装せず、入切も持たない。
+/// 自動スペル修正は旧版で無効だったため実装せず、入切も持たない。
 ///
 /// NSTextCheckingClient は NSView が別の意味で持つ `candidateListTouchBarItem` を要求し、Swift の
 /// NSView の派生型では採用できない。そのため、ビューとは別のこの型がクライアントになる。

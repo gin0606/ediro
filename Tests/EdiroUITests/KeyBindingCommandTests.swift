@@ -20,32 +20,18 @@ nonisolated struct CommandScenario: CustomTestStringConvertible, Sendable {
   let text: String
   let selection: NSRange
   let steps: [Step]
-  /// 操作の後の本文と選択。参照 NSTextView と比べるためだけの筋書きでは nil。
-  let expectedText: String?
-  let expectedSelection: NSRange?
-
-  init(_ text: String, _ location: Int, _ length: Int, _ steps: Step...) {
-    self.init(text, NSRange(location: location, length: length), steps, nil, nil)
-  }
+  let expectedText: String
+  let expectedSelection: NSRange
 
   init(
     _ text: String, _ location: Int, _ length: Int, _ steps: Step...,
     then expectedText: String, _ expectedLocation: Int, _ expectedLength: Int
   ) {
-    self.init(
-      text, NSRange(location: location, length: length), steps, expectedText,
-      NSRange(location: expectedLocation, length: expectedLength))
-  }
-
-  private init(
-    _ text: String, _ selection: NSRange, _ steps: [Step], _ expectedText: String?,
-    _ expectedSelection: NSRange?
-  ) {
     self.text = text
-    self.selection = selection
+    self.selection = NSRange(location: location, length: length)
     self.steps = steps
     self.expectedText = expectedText
-    self.expectedSelection = expectedSelection
+    self.expectedSelection = NSRange(location: expectedLocation, length: expectedLength)
   }
 
   var testDescription: String {
@@ -97,8 +83,7 @@ extension AppKitTests {
     // MARK: - 単一の選択
 
     // 各行は、本文と選択 (位置, 長さ)、送るコマンド、then: の後に操作後の本文と選択を書く。
-    // 値は置き換え前のエディタだった NSTextView の結果に合わせてある。標準の振る舞いが
-    // OS の更新で変わっていないかは KeyBindingReferenceTests で比べる。
+    // 値は置き換え前のエディタだった NSTextView の結果に合わせてある。
 
     nonisolated static let transposeScenarios: [CommandScenario] = [
       .init("abcd", 2, 0, "transpose:", then: "acbd", 3, 0),
@@ -430,7 +415,7 @@ extension AppKitTests {
       let view = makeEditor(text: scenario.text)
       scenario.run(on: view)
       #expect(view.text == scenario.expectedText)
-      #expect(ranges(view) == scenario.expectedSelection.map { [$0] })
+      #expect(ranges(view) == [scenario.expectedSelection])
     }
 
     @Test(arguments: transposeScenarios)
@@ -479,7 +464,7 @@ extension AppKitTests {
     ]
 
     /// その型が自分で実装しているか。NSView から継承しただけの応答は数えない。
-    static func implements(_ type: AnyClass, _ selector: Selector) -> Bool {
+    private static func implements(_ type: AnyClass, _ selector: Selector) -> Bool {
       guard let own = class_getInstanceMethod(type, selector).map(method_getImplementation) else {
         return false
       }

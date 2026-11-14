@@ -760,6 +760,10 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   // MARK: - 標準キーバインドの編集コマンド
   //
   // どれも選択ごとに適用する。単一の選択での結果は、断りが無ければ置き換え前の NSTextView と同じ。
+  //
+  // 書字方向の変更 (makeBaseWritingDirection…: など) と Quick Look は実装しない。書字方向は
+  // 段落スタイルの属性で、Markdown の装飾が本文全体の段落スタイルを置き直すので残らない。
+  // Quick Look は添付ファイルを見せる操作で、書式なしの本文には添付が無い。
 
   struct Replacement {
     let range: NSRange

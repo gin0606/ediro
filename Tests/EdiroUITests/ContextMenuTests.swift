@@ -45,7 +45,6 @@ nonisolated struct ContextMenuScenario: CustomTestStringConvertible, Sendable {
 
 extension AppKitTests {
   struct ContextMenuTests {
-    /// 参照 NSTextView と同じ大きさのウィンドウに載せたエディタ。
     private func makeEditor(text: String) -> (NSWindow, EditorView) {
       let controller = EditorTextController(state: makeState(text: text))
       let window = NSWindow(

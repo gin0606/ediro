@@ -76,8 +76,8 @@ nonisolated struct PasteboardContent: CustomTestStringConvertible, Sendable {
 
   static let all: [PasteboardContent] = ruled + converted + [
     // 文字コードを示さない HTML は、WebKit が文字コードを推測して読むので、NSTextView でも
-    // Ediro でもロケールによって和文が化ける。どの文字になるかは約束せず、参照 NSTextView との
-    // 比較にだけ使う。
+    // Ediro でもロケールによって和文が化ける。どの文字になるかは約束せず、ペーストできるかの
+    // 判定にだけ使う。
     .init(.htmlWithoutEncoding, "文字コードを示さない HTML"),
     .init(.htmlWithCharsetText, "本文に charset を含む HTML"),
   ]
@@ -187,7 +187,6 @@ nonisolated struct PasteboardContent: CustomTestStringConvertible, Sendable {
 
 extension AppKitTests {
   struct DragAndDropTests {
-    /// 参照 NSTextView と同じ大きさのウィンドウに載せたエディタ。
     private func makeEditor(text: String, key: Bool = true) -> (NSWindow, EditorView) {
       let controller = EditorTextController(state: makeState(text: text))
       let windowClass: NSWindow.Type = key ? KeyWindow.self : NSWindow.self
