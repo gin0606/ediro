@@ -10,14 +10,14 @@ description: Ediroの新しいversionを公開する。前のリリースから�
 ## 決めごと
 
 - versionは [Semantic Versioning](https://semver.org/) に従う。1.0.0より前は、互換性を壊す変更でminor、それ以外でpatchを上げる。
-- 互換性を壊す変更は、利用者が更新で対応を迫られるもの。動作要件の引き上げ、設定や下書きの保存先・形式の変更、既存の操作の挙動の変更などを指す。
+- 互換性を壊す変更は、利用者が更新で対応を迫られるもの。動作要件の引き上げ、設定や下書きの保存先・形式の変更、以前の結果を得るのに設定の変更や別の操作が必要になった変更などを指す。
 - immutable releasesが有効なので、Releaseが作られるとタグは付け替えも削除もできず、Releaseを消しても同じタグ名は再利用できない。リリースノートは公開後も編集できる。
 - タグの削除はユーザーの了承なしに行わない。
 
 ## 手順
 
 1. `git fetch --tags` し、HEADがmainで `origin/main` と一致することを確かめる。一致しなければpushなどで合わせず、ユーザーに報告して止める。
-2. 最後に公開したReleaseのタグ（`gh release view --json tagName`）からの変更を調べる。タグだけあってReleaseのないversionがあるので、`git describe` の結果を基準にしない。commitのprefixを手がかりにしつつ差分を見て、利用者から見える変更と互換性を壊す変更を挙げる。
+2. 最後に公開したReleaseのタグ（`gh release view --json tagName`）からの変更を調べる。タグだけあってReleaseのないversionがあるので、`git describe` の結果を基準にしない。commitのprefixを手がかりにしつつ差分を見て、利用者から見える変更と互換性を壊す変更を挙げる。最低macOSを上げる変更があれば、gin0606/homebrew-tapの `Casks/ediro.rb` の `depends_on macos:` が合っているかを確かめ、合っていなければユーザーに報告してタグを付けずに止める。workflowはcaskのversionしか書き換えず、更新すると古いmacOSの利用者にも起動できない版が入る。
 3. 決めごとに沿ってversionを決め、変更の整理とリリースノートの下書きと合わせてユーザーに示し、確認を得る。versionが既存のタグ（Releaseのないものも含む）と重なるときは、重ならなくなるまでpatchを上げる。
 4. HEADのcommitに対するmainのCI workflowの成功を待つ。失敗したらタグを付けずにユーザーに報告する。
 5. HEADに注釈付きタグ（`git tag -a vX.Y.Z -m vX.Y.Z`）を付け、そのタグだけをpushする。
