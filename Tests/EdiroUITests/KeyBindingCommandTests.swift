@@ -539,6 +539,55 @@ extension AppKitTests {
       #expect(view.text == "bacd")
     }
 
+    // 書記素の直前や途中のキャレットは、どれも同じ二文字を入れ替える。
+    @Test(arguments: [
+      ("ae\u{301}\u{302}b", [1, 2], "e\u{301}\u{302}ab", 4),
+      ("ae\u{301}\u{302}b", [2, 3], "e\u{301}\u{302}ab", 4),
+      ("aทำ", [1, 2], "ทำa", 3),
+    ])
+    func 同じ二文字を入れ替えるキャレットは一回だけ入れ替える(
+      text: String, carets: [Int], expected: String, caretAfter: Int
+    ) {
+      let view = makeEditor(text: text)
+      view.select(carets.map(caret), primary: 0)
+      view.transpose(nil)
+      #expect(view.text == expected)
+      #expect(ranges(view) == [caret(caretAfter)])
+      view.undo(nil)
+      #expect(view.text == text)
+      #expect(ranges(view) == carets.map(caret))
+    }
+
+    @Test func 同じ範囲を同じ文字列に置き換える選択だけを一回の置き換えにまとめる() {
+      let merged = makeEditor(text: "abcd")
+      merged.select([caret(1), caret(2)], primary: 0)
+      merged.replaceEach { _, _ in (NSRange(location: 1, length: 2), "X") }
+      #expect(merged.text == "aXd")
+      #expect(ranges(merged) == [caret(2)])
+
+      // 正準等価でも符号単位が違う文字列はまとめず、互いに掛かるので置き換えない。
+      let texts = ["\u{301}\u{327}", "\u{327}\u{301}"]
+      #expect(texts[0] == texts[1])
+      let differing = makeEditor(text: "abcde")
+      differing.select([caret(2), caret(3)], primary: 0)
+      differing.replaceEach { index, _ in (NSRange(location: 1, length: 3), texts[index]) }
+      #expect(differing.text == "abcde")
+      #expect(ranges(differing) == [caret(2), caret(3)])
+
+      let separate = makeEditor(text: "ab")
+      separate.select([caret(0), caret(2)], primary: 0)
+      separate.replaceEach { _, range in (range, "X") }
+      #expect(separate.text == "XabX")
+      #expect(ranges(separate) == [caret(1), caret(4)])
+
+      // まとめた置き換えも、まとめに入らない選択に掛かるなら行わない。
+      let covering = makeEditor(text: "abcde")
+      covering.select([caret(1), caret(2), caret(3)], primary: 0)
+      covering.replaceEach { index, _ in index < 2 ? (NSRange(location: 1, length: 3), "X") : nil }
+      #expect(covering.text == "abcde")
+      #expect(ranges(covering) == [caret(1), caret(2), caret(3)])
+    }
+
     @Test func 続けて消した文字はキャレットごとに繋がり各キャレットに貼れる() {
       let view = makeEditor(text: "one two\nthree four\nfive six")
       view.select([caret(4), caret(14)], primary: 0)
@@ -934,6 +983,18 @@ extension AppKitTests {
       #expect(ranges(view) == [caret(1), caret(4), caret(5)])
       view.undo(nil)
       #expect(view.text == "\u{E9}\n\u{D55C}\nx")
+    }
+
+    @Test(arguments: [[2, 3], [2, 3, 4]])
+    func 同じ文字を分解して消すキャレットは一回だけ消す(carets: [Int]) {
+      let view = makeEditor(text: "ae\u{301}\u{302}b")
+      view.select(carets.map(caret), primary: 0)
+      view.deleteBackwardByDecomposingPreviousCharacter(nil)
+      #expect(view.text == "ae\u{301}b")
+      #expect(ranges(view) == [caret(3)])
+      view.undo(nil)
+      #expect(view.text == "ae\u{301}\u{302}b")
+      #expect(ranges(view) == carets.map(caret))
     }
 
     @Test func Deleteの項目は範囲を選んでいるときだけ使える() {

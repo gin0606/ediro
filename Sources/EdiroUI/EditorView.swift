@@ -839,19 +839,30 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     return perform(edit)
   }
 
-  /// 選択ごとに、`edit` が選択の番号と範囲から返す範囲を文字列で置き換える。nil を返した
-  /// 選択と、前の範囲やほかの選択と重なる範囲は置き換えない。置き換えた選択は、入れた文字の
-  /// 後ろのキャレットになる。
+  /// 選択ごとに、`edit` が選択の番号と範囲から返す範囲を文字列で置き換える。同じ範囲を同じ
+  /// 文字列に置き換える選択は、一回の置き換えにまとめる。nil を返した選択と、前の範囲やほかの
+  /// 選択と重なる範囲は置き換えない。置き換えた選択は、入れた文字の後ろのキャレットになる。
   func replaceEach(
     historyGroup: String? = nil, _ edit: (Int, NSRange) -> (range: NSRange, text: String)?
   ) {
-    let edits = session.selections.indices.compactMap { index in
-      edit(index, nsRange(of: session.selections[index].range)).map {
-        (index: index, replacement: Replacement($0.range, $0.text))
+    var edits: [(indices: [Int], replacement: Replacement)] = []
+    var editsByRange: [NSRange: [Int]] = [:]
+    for index in session.selections.indices {
+      guard let (range, text) = edit(index, nsRange(of: session.selections[index].range))
+      else { continue }
+      // String の == は正準等価で比べるので、符号単位で比べる。
+      if let existing = editsByRange[range]?.first(where: {
+        edits[$0].replacement.text.utf16.elementsEqual(text.utf16)
+      }) {
+        edits[existing].indices.append(index)
+      } else {
+        editsByRange[range, default: []].append(edits.count)
+        edits.append(([index], Replacement(range, text)))
       }
-    }.sorted { $0.replacement.range.location < $1.replacement.range.location }
+    }
+    edits.sort { $0.replacement.range.location < $1.replacement.range.location }
     let selected = session.selections.map { nsRange(of: $0.range) }
-    var kept: [(index: Int, replacement: Replacement)] = []
+    var kept: [(indices: [Int], replacement: Replacement)] = []
     for edit in edits {
       let range = edit.replacement.range
       guard range.length > 0 || edit.replacement.length > 0 else { continue }
@@ -863,7 +874,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       // ほかの選択に掛かる置き換えは、その選択を広げたり消したりしないよう行わない。
       let overlaps = selected.indices.contains { other in
         let range2 = selected[other]
-        return other != edit.index
+        return !edit.indices.contains(other)
           && (NSIntersectionRange(range, range2).length > 0
             || (range.location < range2.location && range2.location < NSMaxRange(range)))
       }
@@ -871,7 +882,10 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     }
     guard !kept.isEmpty else { return }
     let replacements = kept.map(\.replacement)
-    let edited = Dictionary(uniqueKeysWithValues: kept.map { ($0.index, $0.replacement.range) })
+    let edited = Dictionary(
+      uniqueKeysWithValues: kept.flatMap { edit in
+        edit.indices.map { ($0, edit.replacement.range) }
+      })
     let selections = session.selections.indices.map { index -> (anchor: Int, head: Int) in
       if let range = edited[index] {
         let caret = offset(NSMaxRange(range), after: replacements)
