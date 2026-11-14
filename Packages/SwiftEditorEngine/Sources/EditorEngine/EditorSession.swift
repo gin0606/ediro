@@ -193,6 +193,26 @@ func replacedStarts(_ ranges: [Range<Int>], lengths: [Int]) -> [Int] {
         }
         return min(offset, next)..<max(offset, next)
     }
+    /// The UTF-16 range of the grapheme or line separator that contains the code unit at
+    /// `offset`, divided as movement and deletion divide the text. For commands that act on the
+    /// characters around a caret themselves, such as swapping them. Accepts any offset in
+    /// `0..<utf16Count`, including one inside a surrogate pair or CRLF. Throws for other
+    /// offsets, and after disposal.
+    public func characterRange(containing offset: Int) throws -> Range<Int> {
+        try ensureAlive()
+        let snapshot = document.snapshot
+        guard offset >= 0 && offset < snapshot.utf16Count else { throw EditorError.invalidPosition }
+        let line = snapshot.root!.newlineCount(before: offset)
+        let start = try snapshot.lineStart(line), end = try snapshot.lineEnd(line)
+        if offset >= end { return end..<(try snapshot.lineStart(line + 1)) }
+        var boundary = start
+        for character in try snapshot.line(line) {
+            let next = boundary + String(character).utf16.count
+            if offset < next { return boundary..<next }
+            boundary = next
+        }
+        return boundary..<end
+    }
     public func deleteBackward(historyGroup: String? = nil) throws { try delete(forward: false, group: historyGroup) }
     public func deleteForward(historyGroup: String? = nil) throws { try delete(forward: true, group: historyGroup) }
     func delete(forward: Bool, group: String?) throws {

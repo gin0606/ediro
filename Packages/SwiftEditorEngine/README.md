@@ -109,7 +109,9 @@ legal programmatic positions. Movement chooses extended grapheme boundaries. Del
 from a boundary deletes the adjacent grapheme or a complete line separator; deletion
 from an interior scalar boundary expands to the containing grapheme;
 `deletionRange(ofCaretAt:forward:)` returns that range for one caret, for commands that
-delete some carets differently. Selected ranges are explicit programmatic ranges and can
+delete some carets differently. `characterRange(containing:)` returns the grapheme or line
+separator that contains a code unit, for commands that act on the characters around a caret
+themselves. Selected ranges are explicit programmatic ranges and can
 intentionally edit individual scalars.
 
 There is no implicit conversion to Swift `String.Index`. To work with returned line

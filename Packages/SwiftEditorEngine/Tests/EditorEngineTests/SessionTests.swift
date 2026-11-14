@@ -57,6 +57,28 @@ import Foundation
         try e.dispose()
         #expect(throws: EditorError.disposed) { try e.deletionRange(ofCaretAt: 2, forward: false) }
     }
+    @Test func characterRangeContainingAnOffset() throws {
+        // NSString divides ทำ and the Prepend sequence ൎക into two characters each.
+        let text = "aทำ👍\u{1F3FD}\r\n\u{0D4E}\u{0D15}"
+        let d = Document(id:"character range",text:text,endOfLine:.crlf)
+        let e = try EditorSession(document:d)
+        for (offset, expected) in [
+            (0, 0..<1), (1, 1..<3), (2, 1..<3), (3, 3..<7), (4, 3..<7), (6, 3..<7),
+            (7, 7..<9), (8, 7..<9), (9, 9..<11), (10, 9..<11),
+        ] {
+            #expect(try e.characterRange(containing: offset) == expected, "\(offset)")
+        }
+        // Each range is what deleteForward deletes from a caret at its start.
+        for range in [0..<1, 1..<3, 3..<7, 7..<9, 9..<11] {
+            #expect(try e.deletionRange(ofCaretAt: range.lowerBound, forward: true) == range)
+        }
+        #expect(throws: EditorError.self) { try e.characterRange(containing: 11) }
+        #expect(throws: EditorError.self) { try e.characterRange(containing: -1) }
+        try e.dispose()
+        #expect(throws: EditorError.disposed) { try e.characterRange(containing: 0) }
+        let lf = try EditorSession(document:Document(id:"lf character range",text:"a\n\nb"))
+        #expect(try [0, 1, 2, 3].map { try lf.characterRange(containing: $0) } == [0..<1, 1..<2, 2..<3, 3..<4])
+    }
     @Test func compositionCommitCancelAndExternalExclusion() throws {
         let d = Document(id:"ime",text:"abc")
         let a = try EditorSession(document:d), b = try EditorSession(document:d)
