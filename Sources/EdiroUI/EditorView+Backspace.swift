@@ -28,7 +28,7 @@ extension EditorView {
     let ranges = session.selections.map { nsRange(of: $0.range) }
     let rules = ranges.map { range -> NSRange? in
       guard range.length == 0, let rule = markerOrIndentationRange(before: range.location),
-        let character = engineCharacterRange(before: range.location),
+        let character = engineDeletionRange(ofCaretAt: range.location, forward: false),
         NSMaxRange(character) == range.location
       else { return nil }
       return rule
@@ -41,7 +41,8 @@ extension EditorView {
         if let reference {
           return smartDeletionRange(of: range, forward: false, reference: reference)
         }
-        return range.length > 0 ? range : engineCharacterRange(before: range.location)
+        if range.length > 0 { return range }
+        return engineDeletionRange(ofCaretAt: range.location, forward: false)
       }, historyGroup: reference == nil ? "deleting" : nil)
     return true
   }
@@ -60,13 +61,5 @@ extension EditorView {
     let prefix = string.substring(with: NSRange(location: line.location, length: column))
     let length = indentUnit.backspaceLength(before: prefix)
     return length > 0 ? NSRange(location: caret - length, length: length) : nil
-  }
-
-  /// エンジンの Backspace が選択のないキャレット `caret` で消す範囲。消す文字がなければ nil。
-  private func engineCharacterRange(before caret: Int) -> NSRange? {
-    guard let range = try? session.deletionRange(ofCaretAt: caret, forward: false),
-      !range.isEmpty
-    else { return nil }
-    return NSRange(location: range.lowerBound, length: range.count)
   }
 }

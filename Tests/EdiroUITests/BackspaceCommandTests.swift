@@ -259,10 +259,10 @@ extension AppKitTests {
       #expect(view.text == "    a\nทำ\nhello world")
     }
 
-    @Test func 単語の選択があれば規則に当たらないキャレットはスマート削除と同じ文字を消す() {
-      // スマート削除はキャレットの前を NSString の合成文字の単位で消すので、タイ文字の ทำ は
-      // ำ だけを消す。規則に当たるキャレットがあってもなくても同じ。
-      for (rule, expected) in [(4, "a\nท\nhello"), (5, "    \nท\nhello")] {
+    @Test func 単語の選択があっても規則に当たらないキャレットはエンジンのBackspaceと同じ文字を消す() {
+      // タイ文字の ทำ は、NSString の合成文字の単位では 2 文字だが、エンジンでは 1 文字。
+      // 規則に当たるキャレットがあってもなくても同じ。
+      for (rule, expected) in [(4, "a\n\nhello"), (5, "    \n\nhello")] {
         let (view, _) = makeEditor(text: "    a\nทำ\nhello world")
         view.select([caret(rule), caret(8), NSRange(location: 15, length: 5)], primary: 0)
         view.inputAssistance.wordSelection = true

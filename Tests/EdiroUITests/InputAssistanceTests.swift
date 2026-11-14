@@ -454,6 +454,19 @@ extension InputAssistanceTests {
     #expect(view.text == "three")
   }
 
+  @Test(arguments: ["ทำ", "\u{0D4E}\u{0D15}", "\u{0600}a"])
+  func smartDeletionRemovesTheEngineCharacterAtUnselectedCarets(character: String) {
+    // どれも NSString の合成文字の単位では 2 文字だが、エンジンでは 1 文字。
+    let text = "one two\n" + character
+    for (action, caret) in [("deleteBackward:", text.utf16.count), ("deleteForward:", 8)] {
+      let view = EditorView(text: text)
+      view.select([NSRange(location: 0, length: 3), NSRange(location: caret, length: 0)], primary: 0)
+      view.inputAssistance.wordSelection = true
+      view.doCommand(by: NSSelectorFromString(action))
+      #expect(view.text == "two\n", "\(action)")
+    }
+  }
+
   @Test func smartDeletionAlsoEditsUnselectedCarets() {
     let view = EditorView(text: "abc one two")
     view.select([NSRange(location: 2, length: 0), NSRange(location: 4, length: 3)], primary: 1)

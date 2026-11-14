@@ -122,18 +122,21 @@ extension EditorView {
   }
 
   /// スマート削除 (`smartDeleteSelection(forward:)`) で選択 `range` を消す範囲。選択のない
-  /// キャレットは、`forward` が nil なら消さず、そうでなければ前か後ろの 1 文字を消す。合成文字の
-  /// 途中のキャレットは、その文字ごと消す。`reference` は `inputReference()`。
+  /// キャレットは、`forward` が nil なら消さず、そうでなければエンジンの Backspace・Delete と同じ
+  /// 範囲 (`engineDeletionRange(ofCaretAt:forward:)`) を消す。`reference` は `inputReference()`。
   func smartDeletionRange(of range: NSRange, forward: Bool?, reference: NSTextView) -> NSRange? {
     if range.length > 0 { return reference.smartDeleteRange(forProposedRange: range) }
     guard let forward else { return nil }
-    let string = layout.storage.mutableString
-    let caret = range.location
-    if caret < string.length {
-      let character = string.rangeOfComposedCharacterSequence(at: caret)
-      if forward || character.location < caret { return character }
-    }
-    return !forward && caret > 0 ? string.rangeOfComposedCharacterSequence(at: caret - 1) : nil
+    return engineDeletionRange(ofCaretAt: range.location, forward: forward)
+  }
+
+  /// エンジンの Backspace (`forward` が false) か Delete が、選択のないキャレット `caret` で消す
+  /// 範囲。消す文字がなければ nil。
+  func engineDeletionRange(ofCaretAt caret: Int, forward: Bool) -> NSRange? {
+    guard let range = try? session.deletionRange(ofCaretAt: caret, forward: forward),
+      !range.isEmpty
+    else { return nil }
+    return NSRange(location: range.lowerBound, length: range.count)
   }
 
   /// `ranges` を消す。重なるか接する範囲は 1 つにまとめる。選択は消した後も同じ文字を指し、
