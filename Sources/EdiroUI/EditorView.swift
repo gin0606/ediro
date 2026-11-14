@@ -709,16 +709,16 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
       }
     }
   }
-  /// 直前の文字を正準分解し、最後の符号点だけを消す。`é` は `e` に、`한` は `하` になる。
+  /// エンジンの Backspace が消す文字を正準分解し、最後の符号点だけを消す。`é` は `e` に、`한` は
+  /// `하` になる。文字の途中のキャレットではその文字が対象になる (NSTextView は前の文字を対象にする)。
   /// 分解しても符号点が一つなら、文字ごと消す。結果は合成し直さない (NSTextView と同じ)。
   override func deleteBackwardByDecomposingPreviousCharacter(_ sender: Any?) {
     let string = layout.storage.mutableString
     keepingKill {
       replaceEach(historyGroup: "deleting") { _, range in
         guard range.length == 0 else { return (range, "") }
-        // 文字の途中のキャレットは、その文字の前にあるものとして扱う。
-        let caret = characterStart(at: range.location)
-        guard caret > 0, let previous = characterRange(containing: caret - 1) else { return nil }
+        guard let previous = engineDeletionRange(ofCaretAt: range.location, forward: false)
+        else { return nil }
         let scalars = string.substring(with: previous).decomposedStringWithCanonicalMapping
           .unicodeScalars
         return (previous, String(String.UnicodeScalarView(scalars.dropLast())))

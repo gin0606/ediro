@@ -391,14 +391,14 @@ extension AppKitTests {
       .init("ab", 0, 1, "deleteBackwardByDecomposingPreviousCharacter:", then: "b", 0, 0),
       .init("ab", 0, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "ab", 0, 0),
       .init("a\nb", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "ab", 1, 0),
-      .init(
-        "ae\u{301}b", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:",
-        then: "e\u{301}b", 0, 0),
+      // 文字の途中のキャレットでは、Backspace と同じく、そのキャレットを含む文字を分解する。
+      // NSTextView は前の文字を分解するので、結果が違う。
+      .init("ae\u{301}b", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "aeb", 2, 0),
       // 文字はエンジンの書記素で区切る。éำ と ทำ は NSString では 2 文字だが、エンジンでは 1 文字。
       .init(
         "a\u{E9}\u{E33}", 3, 0, "deleteBackwardByDecomposingPreviousCharacter:",
         then: "ae\u{301}", 3, 0),
-      .init("aทำ", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "ทำ", 0, 0),
+      .init("aทำ", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "aท", 2, 0),
     ]
 
     /// 選択を単語の境界まで広げて変換し、変換した範囲を選ぶ。
