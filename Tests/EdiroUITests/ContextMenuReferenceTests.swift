@@ -17,8 +17,8 @@ extension AppKitTests {
   /// 標準の右クリックメニューの中身は OS の版と開発機の設定 (Writing Tools が使えるかなど) で
   /// 変わるので、既定の `swift test` では走らせない。エディタの仕様は ContextMenuTests が明示した
   /// 値で確かめる。ここで落ちたら、差の項目を見て、標準が変わったのか、エディタが標準から外れたのか
-  /// を見分ける。たとえば Writing Tools が使えるのに NSTextView がその項目を出さない OS では、
-  /// Writing Tools の 3 項目がエディタにだけあるという差で落ちる。
+  /// を見分け、標準に合わせるかを決める。たとえば Writing Tools が使えるのに NSTextView がその
+  /// 項目を出さない OS では、Writing Tools の 3 項目がエディタにだけあるという差で落ちる。
   @Suite(.enabled(if: ProcessInfo.processInfo.environment["EDIRO_INVENTORY"] == "1"))
   struct ContextMenuReferenceTests {
     private func makeEditor(text: String) -> (NSWindow, EditorView) {

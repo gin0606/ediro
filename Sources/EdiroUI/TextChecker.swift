@@ -4,7 +4,7 @@ import TextCheckingBridge
 
 /// スペルと文法の検査と自動置換の入切。どれもその起動の間だけ持ち、保存しない。
 ///
-/// 既定値は置き換え前のエディタ (NSTextView) に合わせる。入力中のスペルチェックと、引用符・
+/// 既定値は置き換え前のエディタ (NSTextView) に合わせてある。入力中のスペルチェックと、引用符・
 /// ダッシュ・テキスト置換は、旧版が起動のたびにオフにしていたのでオフ。ほかは NSTextView の
 /// 既定値。
 struct TextCheckingSettings: Equatable {

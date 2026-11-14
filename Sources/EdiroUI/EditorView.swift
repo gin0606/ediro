@@ -759,7 +759,7 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
   // MARK: - 標準キーバインドの編集コマンド
   //
-  // どれも選択ごとに適用する。単一の選択での結果は、参照 NSTextView と同じにする。
+  // どれも選択ごとに適用する。単一の選択での結果は、断りが無ければ置き換え前の NSTextView と同じ。
 
   struct Replacement {
     let range: NSRange

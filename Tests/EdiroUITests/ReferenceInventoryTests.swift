@@ -7,7 +7,7 @@ import Testing
 
 extension AppKitTests {
   /// 参照 NSTextView が利用者に提供している機能を、プログラムから観測できる範囲で書き出す。
-  /// 自前のビューに置き換えたエディタで回復すべき機能を、洗い出す根拠にする。
+  /// 自前のビューに置き換えたときは、失われた機能を洗い出す根拠にした。
   ///
   /// EDIRO_INVENTORY=1 swift test --filter ReferenceInventoryTests
   /// 値は開発機のシステム設定 (テキスト置換の一覧や自動スペル修正の既定など) で変わるので、

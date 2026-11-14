@@ -26,7 +26,7 @@ struct ContextMenuRequest {
 /// 右クリックメニュー、調べる、翻訳、共有、読み上げ、サービス、単語の変換。
 ///
 /// 項目の並びと出し分けは、参照 NSTextView (置き換え前のエディタと同じ設定の NSTextView) が
-/// `menu(for:)` で返すものに合わせる。NSTextView が private の action で出す項目のうち、調べると
+/// `menu(for:)` で返すものに合わせてある。NSTextView が private の action で出す項目のうち、調べると
 /// 翻訳は公開 API (`showDefinition(for:at:)` と SwiftUI の `translationPresentation`) で代わりに
 /// する。Search With Google と Report a Concern は代わりの公開 API が無いので出さない。
 /// 縦書き (Layout Orientation) は扱わない。

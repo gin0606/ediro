@@ -3,7 +3,7 @@ import AppKit
 /// スペルと文法の検査、自動置換の入切、それらの右クリックメニュー。
 ///
 /// 検査と置換そのものは `TextChecker` が NSTextCheckingController に任せる。入切の名前と
-/// メニューの項目は NSTextView に合わせる。
+/// メニューの項目は NSTextView に合わせてある。
 extension EditorView: NSChangeSpelling, NSIgnoreMisspelledWords {
   // MARK: - 入切
 
