@@ -83,7 +83,8 @@ extension AppKitTests {
     // MARK: - 単一の選択
 
     // 各行は、本文と選択 (位置, 長さ)、送るコマンド、then: の後に操作後の本文と選択を書く。
-    // 値は置き換え前のエディタだった NSTextView の結果に合わせてある。
+    // 値は置き換え前のエディタだった NSTextView の結果に合わせてある。ただし文字の区切りは
+    // エンジンの書記素に合わせ、NSTextView と区切りが違う文字の行はそう断ってある。
 
     nonisolated static let transposeScenarios: [CommandScenario] = [
       .init("abcd", 2, 0, "transpose:", then: "acbd", 3, 0),
@@ -110,6 +111,14 @@ extension AppKitTests {
       .init("ab\u{2028}cd", 2, 0, "transpose:", then: "ba\u{2028}cd", 2, 0),
       .init("ab\u{2029}cd", 2, 0, "transpose:", then: "ba\u{2029}cd", 2, 0),
       .init("ab\u{B}cd", 2, 0, "transpose:", then: "a\u{B}bcd", 3, 0),
+      // 文字はエンジンの書記素で区切る。ทำ は NSString では 2 文字だが、エンジンでは 1 文字。
+      .init("ทำx", 2, 0, "transpose:", then: "xทำ", 3, 0),
+      .init("aทำ", 3, 0, "transpose:", then: "aทำ", 3, 0),
+      .init("xทำb", 2, 0, "transpose:", then: "ทำxb", 3, 0),
+      .init("x\u{0D4E}\u{0D15}", 1, 0, "transpose:", then: "\u{0D4E}\u{0D15}x", 3, 0),
+      .init("ทำx", 3, 0, "transpose:", then: "xทำ", 3, 0),
+      // x と ZWJ は、NSString では続く y と 1 文字だが、エンジンでは y と別の文字。
+      .init("ax\u{200D}y", 3, 0, "transpose:", then: "ayx\u{200D}", 4, 0),
     ]
 
     nonisolated static let killScenarios: [CommandScenario] = [
@@ -238,6 +247,13 @@ extension AppKitTests {
     ]
 
     nonisolated static let markScenarios: [CommandScenario] = [
+      // 文字の途中の印は、エンジンの書記素の前に寄せる。ทำ は NSString では 2 文字。
+      .init(
+        "ทำ ab", 1, 0, "setMark:", "moveToEndOfDocument:", "selectToMark:",
+        then: "ทำ ab", 0, 5),
+      .init(
+        "ab ทำ", 1, 3, "setMark:", "moveToBeginningOfDocument:", "selectToMark:",
+        then: "ab ทำ", 0, 3),
       .init(
         "one two", 4, 0, "setMark:", "moveToEndOfDocument:", "selectToMark:",
         then: "one two", 4, 3),
@@ -378,6 +394,11 @@ extension AppKitTests {
       .init(
         "ae\u{301}b", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:",
         then: "e\u{301}b", 0, 0),
+      // 文字はエンジンの書記素で区切る。éำ と ทำ は NSString では 2 文字だが、エンジンでは 1 文字。
+      .init(
+        "a\u{E9}\u{E33}", 3, 0, "deleteBackwardByDecomposingPreviousCharacter:",
+        then: "ae\u{301}", 3, 0),
+      .init("aทำ", 2, 0, "deleteBackwardByDecomposingPreviousCharacter:", then: "ทำ", 0, 0),
     ]
 
     /// 選択を単語の境界まで広げて変換し、変換した範囲を選ぶ。

@@ -716,10 +716,9 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     keepingKill {
       replaceEach(historyGroup: "deleting") { _, range in
         guard range.length == 0 else { return (range, "") }
-        // 合成文字の途中のキャレットは、その文字の前にあるものとして扱う。
-        let caret = string.characterStart(at: range.location)
-        guard caret > 0 else { return nil }
-        let previous = string.rangeOfComposedCharacterSequence(at: caret - 1)
+        // 文字の途中のキャレットは、その文字の前にあるものとして扱う。
+        let caret = characterStart(at: range.location)
+        guard caret > 0, let previous = characterRange(containing: caret - 1) else { return nil }
         let scalars = string.substring(with: previous).decomposedStringWithCanonicalMapping
           .unicodeScalars
         return (previous, String(String.UnicodeScalarView(scalars.dropLast())))
@@ -760,6 +759,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   // MARK: - 標準キーバインドの編集コマンド
   //
   // どれも選択ごとに適用する。単一の選択での結果は、断りが無ければ置き換え前の NSTextView と同じ。
+  // ただし文字はエンジンの書記素で区切る (`characterRange(containing:)`) ので、NSTextView と
+  // 区切りが違う文字 (タイ文字の ทำ など) では結果も違う。
   //
   // 書字方向の変更 (makeBaseWritingDirection…: など) と Quick Look は実装しない。書字方向は
   // 段落スタイルの属性で、Markdown の装飾が本文全体の段落スタイルを置き直すので残らない。
@@ -891,22 +892,24 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     let string = layout.storage.mutableString
     replaceEach { _, range in
       guard range.length == 0 else { return nil }
-      let caret = string.characterStart(at: range.location)
-      guard caret > 0 else { return nil }
-      var first = string.rangeOfComposedCharacterSequence(at: caret - 1)
-      var second: NSRange
+      let caret = characterStart(at: range.location)
+      guard caret > 0, var first = characterRange(containing: caret - 1) else { return nil }
+      let next: NSRange?
       if caret < range.location {
-        // 合成文字の途中のキャレットは、その文字の前にあるものとして扱う。
-        second = string.rangeOfComposedCharacterSequence(at: caret)
+        // 文字の途中のキャレットは、その文字の前にあるものとして扱う。
+        next = characterRange(containing: caret)
       } else if caret == string.length || string.isLineBreak(at: caret) {
         // 段落の末尾では、キャレットの前の二文字を入れ替える。前の文字が複数の符号単位から
         // なるときは何もしない (NSTextView と同じ)。
-        second = first
-        guard second.length == 1, second.location > 0 else { return nil }
-        first = string.rangeOfComposedCharacterSequence(at: second.location - 1)
+        next = first
+        guard first.length == 1, first.location > 0,
+          let previous = characterRange(containing: first.location - 1)
+        else { return nil }
+        first = previous
       } else {
-        second = string.rangeOfComposedCharacterSequence(at: caret)
+        next = characterRange(containing: caret)
       }
+      guard let second = next else { return nil }
       return (
         NSRange(location: first.location, length: NSMaxRange(second) - first.location),
         string.substring(with: second) + string.substring(with: first)
@@ -997,8 +1000,8 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     }
     let string = layout.storage.mutableString
     return zip(session.selections, marks).map { selection, mark in
-      let start = string.characterStart(at: min(mark.location, string.length))
-      let end = string.characterStart(at: min(NSMaxRange(mark), string.length))
+      let start = characterStart(at: min(mark.location, string.length))
+      let end = characterStart(at: min(NSMaxRange(mark), string.length))
       return (nsRange(of: selection.range), NSRange(location: start, length: max(end - start, 0)))
     }
   }
@@ -1584,12 +1587,22 @@ final class EditorView: NSView, NSTextInputClient, NSUserInterfaceValidations {
   }
 }
 
-extension NSString {
-  /// `index` を含む文字の先頭。合成文字の途中を指す位置を、その文字の前に寄せる。
-  fileprivate func characterStart(at index: Int) -> Int {
-    index < length ? rangeOfComposedCharacterSequence(at: index).location : index
+extension EditorView {
+  /// `index` の符号単位を含む文字の範囲。文字はエンジンの書記素か行の区切り
+  /// (`EditorSession.characterRange(containing:)`)。`index` が本文の外か、セッションが破棄
+  /// されていれば nil。
+  fileprivate func characterRange(containing index: Int) -> NSRange? {
+    guard let range = try? session.characterRange(containing: index) else { return nil }
+    return NSRange(location: range.lowerBound, length: range.count)
   }
 
+  /// `index` を含む文字の先頭。文字の途中を指す位置を、その文字の前に寄せる。
+  fileprivate func characterStart(at index: Int) -> Int {
+    characterRange(containing: index)?.location ?? index
+  }
+}
+
+extension NSString {
   /// `index` の文字が行を終えるか。NSTextView の入れ替えと単語の選択は、改行のほかに
   /// 改ページや U+2028 なども行の区切りとして扱う。
   fileprivate func isLineBreak(at index: Int) -> Bool {
